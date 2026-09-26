@@ -11,32 +11,24 @@ ke andar date-wise alag-alag numbering series allow karta hai.
 
 ## Prerequisite
 
-- Meesho ke sales invoices ek dedicated Voucher Type se bante hon (e.g. `Sales - Meesho`
-  ya jo bhi voucher type currently use ho raha hai). Agar abhi tak sab marketplaces
-  (Meesho, Amazon, Flipkart etc.) ek hi `Sales` voucher type se ban rahe hain, to pehle
-  Meesho ke liye alag voucher type banana zaroori hai, warna prefix sabhi sales
-  invoices par lag jayega.
+Meesho ke sales invoices pehle se ek dedicated Voucher Type — **`Sales Meesho`** — se
+bante hain. Isliye naya voucher type banane ki zaroorat nahi hai; seedha isi voucher
+type ko **Alter** karke numbering add karni hai.
 
 ## Step 1 — Company select karo
 
 Gateway of Tally mein **Zikr India** company open/select karo (F1 se company change
 kar sakte ho agar khuli nahi hai).
 
-## Step 2 — Meesho ka dedicated Voucher Type check/banao (agar nahi hai)
+## Step 2 — Voucher Type Alter karo
 
-1. `Gateway of Tally → Create → Voucher Type` (ya path: Masters → Voucher Types → Create)
-2. Name: `Sales - Meesho` (ya jo naam use karna chahte ho)
-3. Type of Voucher: `Sales`
-4. `Use Advance Configuration`: **Yes**
-5. Baaki settings default rakh sakte ho (Invoice mode Yes, GST applicable etc. — jaisa
-   normal Sales voucher type mein set hai).
-
-*(Agar Meesho ke liye pehle se alag voucher type ban chuka hai, to seedha Step 3 par
-jao aur usko **Alter** karo.)*
+1. `Gateway of Tally → Alter → Voucher Type` (ya path: Masters → Voucher Types → Alter)
+2. Select karo: **Sales Meesho**
+3. `Use Advance Configuration` ko **Yes** karo (agar pehle se Yes nahi hai)
 
 ## Step 3 — Voucher Numbering configure karo
 
-Voucher Type creation/alteration screen mein neeche numbering ka section hota hai:
+Voucher Type alteration screen mein neeche numbering ka section hota hai:
 
 1. **Method of Numbering**: `Automatic`
 2. **Prevent Duplicates**: `Yes`
