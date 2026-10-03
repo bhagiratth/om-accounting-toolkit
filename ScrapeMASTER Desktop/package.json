@@ -1,0 +1,47 @@
+{
+  "name": "scrapemaster-desktop",
+  "productName": "ScrapeMASTER",
+  "version": "1.0.0",
+  "description": "ScrapeMASTER desktop: collect local business listings (Name, Phone, Email) from Google's Local Finder across keywords, states, cities and pincodes.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "sync": "node tools/sync-from-extension.js",
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "node test/unit.js",
+    "dist": "npm run sync && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.omglobal.scrapemaster",
+    "productName": "ScrapeMASTER",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "driver.js",
+      "geo-data.js",
+      "engine/**",
+      "scraper/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  }
+}

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:">
+  <title>ScrapeMASTER</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="layout.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- top bar: brand, status, run controls -->
+  <header class="top">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+        <path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z" fill="rgba(255,255,255,.95)"/>
+        <path d="M12.9 4.8 9.2 10.3h2.5l-.7 4.1 3.8-5.5h-2.5z" fill="#6d4df0"/>
+      </svg>
+      <div><h1>ScrapeMASTER</h1><p>Local listings &rarr; CSV</p></div>
+    </div>
+    <span id="pill" class="pill" data-state="idle" role="status" aria-live="polite"><i class="dot"></i><span id="pillText">Idle</span></span>
+    <div class="spacer"></div>
+    <div class="actions top-actions">
+      <button id="resumeBtn" type="button" class="btn warn" hidden>Resume</button>
+      <button id="continueBtn" type="button" class="btn warn" hidden>Continue</button>
+      <button id="stopBtn" type="button" class="btn ghost" hidden>Stop</button>
+      <button id="downloadBtn" type="button" class="btn secondary" disabled>Export CSV</button>
+      <button id="folderBtn" type="button" class="btn secondary" hidden>Show saved file</button>
+      <button id="historyBtn" type="button" class="btn secondary">Previous runs</button>
+      <button id="paneOpen" type="button" class="btn secondary">Show Google</button>
+    </div>
+  </header>
+
+  <!-- extraction options, left to right -->
+  <section id="setupCard" class="opts">
+    <div class="o o-kw">
+      <label class="label" for="keywords">Keywords <span class="hint">one per line</span></label>
+      <textarea id="keywords" class="input" rows="3" placeholder="dentist&#10;dental clinic&#10;orthodontist" spellcheck="false"></textarea>
+    </div>
+
+    <div class="o o-where">
+      <div class="label" id="modeLabel">Where</div>
+      <div id="modeSeg" class="seg three" role="radiogroup" aria-labelledby="modeLabel">
+        <button type="button" role="radio" aria-checked="true" tabindex="0" data-value="custom">Type place</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="india">Pick India</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="tasks">Task file</button>
+      </div>
+      <div id="customPanel">
+        <textarea id="places" class="input" rows="2" placeholder="Mumbai&#10;Dubai&#10;(empty = keywords used as typed)" spellcheck="false"></textarea>
+        <button id="uaeFill" type="button" class="link">+ fill the UAE emirates</button>
+      </div>
+      <div id="tasksPanel" hidden>
+        <button id="tskOpen" type="button" class="btn secondary wide">Choose a .tsk task file&hellip;</button>
+        <p id="tskInfo" class="geo-sum">One search per line: <b>id|category|location|country|state|city|zip-or-limit</b>. Each line brings its own keyword, so the keywords box is not used.</p>
+      </div>
+      <div id="indiaPanel" hidden>
+        <button id="geoOpen" type="button" class="btn secondary wide">Choose states / cities / pincodes&hellip;</button>
+        <p id="geoSummary" class="geo-sum"></p>
+      </div>
+    </div>
+
+    <div class="o o-src">
+      <div class="label" id="srcLabel">Data source</div>
+      <div id="srcSeg" class="seg two" role="radiogroup" aria-labelledby="srcLabel">
+        <button type="button" role="radio" aria-checked="true" tabindex="0" data-value="finder">Google list</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="maps">Google Maps</button>
+      </div>
+      <p id="srcNote" class="geo-sum">Fast: about 20 businesses per page; Google stays hidden.</p>
+      <div id="perWrap" hidden>
+        <div class="label" id="perLabel">Places per search</div>
+        <div id="perSeg" class="seg four" role="radiogroup" aria-labelledby="perLabel">
+          <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="20">20</button>
+          <button type="button" role="radio" aria-checked="true" tabindex="0" data-value="50">50</button>
+          <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="100">100</button>
+          <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="120">Max</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="o o-num">
+      <div class="label" id="segLabel">Businesses <span class="hint">phone: mobile first, else landline</span></div>
+      <div id="seg" class="seg five" role="radiogroup" aria-labelledby="segLabel">
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="50">50</button>
+        <button type="button" role="radio" aria-checked="true" tabindex="0" data-value="100">100</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="200">200</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="1000">1000</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="0">All</button>
+      </div>
+      <div class="label" id="speedLabel">Speed <span class="hint">slower = safer</span></div>
+      <div id="speedSeg" class="seg three" role="radiogroup" aria-labelledby="speedLabel">
+        <button type="button" role="radio" aria-checked="true" tabindex="0" data-value="safe">Safe</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="balanced">Balanced</button>
+        <button type="button" role="radio" aria-checked="false" tabindex="-1" data-value="fast">Fast</button>
+      </div>
+    </div>
+
+    <div class="o o-go">
+      <label class="check" for="findEmails">
+        <input id="findEmails" type="checkbox">
+        <span><b>Find emails &amp; phone numbers</b> from each business's website<small>Runs alongside the search for every business that has a website.</small></span>
+      </label>
+      <button id="startBtn" type="button" class="btn primary">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+        Start Scraping
+      </button>
+      <p id="formMsg" class="form-msg" role="alert" hidden></p>
+    </div>
+  </section>
+
+  <!-- progress -->
+  <section id="progressCard" class="prog" data-state="idle">
+    <div class="prog-left">
+      <div class="count">
+        <span id="countNum" class="num">0</span>
+        <span class="of">/ <span id="targetNum">100</span></span>
+        <span id="pct" class="pct">0%</span>
+      </div>
+      <div class="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar"><div id="barFill" class="fill"></div></div>
+    </div>
+    <div class="prog-right">
+      <span id="queryChip" class="chip" hidden></span>
+      <p id="taskLine" class="taskline" hidden></p>
+      <p id="msg" class="msg"></p>
+      <p id="waitLine" class="waitline" hidden></p>
+      <ul id="help" class="help" hidden></ul>
+    </div>
+  </section>
+
+  <!-- live extracted data -->
+  <section class="data">
+    <div class="data-bar">
+      <b>Extracted data</b>
+      <span id="dataInfo" class="data-info">nothing yet</span>
+      <button id="colBtn" type="button" class="btn secondary small">Columns&hellip;</button>
+      <input id="dataFilter" class="input small" type="search" placeholder="Filter rows..." aria-label="Filter extracted rows">
+    </div>
+    <div class="data-row">
+    <div class="data-scroll">
+      <table id="dataTable">
+        <thead><tr id="dataHead"></tr></thead>
+        <tbody id="dataBody"></tbody>
+      </table>
+      <p id="dataEmpty" class="data-empty">Start a run and the businesses appear here as they are found.</p>
+    </div>
+    <aside id="dock" class="dock" hidden>
+      <div class="dock-bar"><b>Google Maps (live)</b><span class="panehint">Google Maps needs to stay visible while it works</span></div>
+      <div id="dockHost"></div>
+    </aside>
+    </div>
+  </section>
+
+  <div id="demoBar" class="demo" hidden>
+    <span>Demo mode</span>
+    <button type="button" data-demo="idle">Idle</button>
+    <button type="button" data-demo="running">Running</button>
+    <button type="button" data-demo="blocked">Captcha</button>
+    <button type="button" data-demo="timeout">Timeout</button>
+    <button type="button" data-demo="done">Done</button>
+    <button type="button" data-demo="error">Error</button>
+  </div>
+</div>
+
+<!-- places picker: States | Cities | Areas, left to right -->
+<div id="geoPop" class="overlay" hidden>
+  <div class="dialog geo-dialog" role="dialog" aria-label="Choose places">
+    <div class="dialog-bar"><b>India</b><span class="panehint">tick states, then cities, then areas / pincodes. Leave a level empty to cover it automatically.</span><button id="geoClose" type="button" class="btn primary small">Done</button></div>
+    <div class="quick">
+      <b>Quick pick</b>
+      <label>State <select id="qState"></select></label>
+      <label>City <select id="qCity"></select></label>
+      <label>Pincode <select id="qPin"></select></label>
+      <button id="qAdd" type="button" class="btn secondary small">Add</button>
+    </div>
+    <div class="geo-cols">
+      <div id="geoStates" class="gsec"></div>
+      <div id="geoDists" class="gsec"></div>
+      <div id="geoPins" class="gsec"></div>
+    </div>
+  </div>
+</div>
+
+<!-- which columns the table shows and the CSV exports -->
+<div id="colPop" class="overlay" hidden>
+  <div class="dialog col-dialog" role="dialog" aria-label="Columns">
+    <div class="dialog-bar"><b>Columns</b><span class="panehint">what the table shows and the CSV exports</span>
+      <button id="colAll" type="button" class="link">All</button><button id="colReset" type="button" class="link">Default</button>
+      <button id="colClose" type="button" class="btn primary small">Done</button></div>
+    <div id="colList" class="col-grid"></div>
+  </div>
+</div>
+
+<!-- previous runs -->
+<div id="historyPop" class="overlay" hidden>
+  <div class="dialog hist-dialog" role="dialog" aria-label="Previous runs">
+    <div class="dialog-bar"><b>Previous runs</b><span class="panehint">saved on this computer</span><button id="historyClose" type="button" class="btn primary small">Close</button></div>
+    <section id="historyCard"><div id="historyList" class="history"></div></section>
+    <p id="historyEmpty" class="data-empty" hidden>No saved runs yet.</p>
+  </div>
+</div>
+
+<!-- the live Google page: appears by itself when Google asks for a CAPTCHA, or via "Show Google" -->
+<div id="paneModal" class="overlay" hidden>
+  <div class="dialog pane-dialog" role="dialog" aria-label="Google">
+    <div class="dialog-bar">
+      <b>Google</b>
+      <span id="paneNote" class="panehint">If Google shows a check, solve it here; the run continues by itself.</span>
+      <button type="button" class="link" id="paneSignin">Sign in to Google</button>
+      <button type="button" class="link" id="paneHome">Google home</button>
+      <button type="button" class="link" id="paneReload">Reload</button>
+      <button type="button" class="btn primary small" id="paneClose">Close</button>
+    </div>
+    <div id="paneHost"><div class="pane-empty">The Google page appears here (desktop app only).</div></div>
+  </div>
+</div>
+
+<script src="../geo-data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

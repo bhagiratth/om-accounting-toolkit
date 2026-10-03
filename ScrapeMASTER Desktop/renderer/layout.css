@@ -1,0 +1,99 @@
+/* Desktop layout on top of the shared popup.css:
+ *   top bar (brand / status / run buttons)
+ *   extraction options, laid out left to right
+ *   progress strip
+ *   live extracted-data table filling the rest of the window
+ * The Google page is a native view; it is shown inside #paneModal only when needed. */
+html, body { height: 100%; }
+body { width: auto; overflow: hidden; }
+
+.app { display: grid; grid-template-rows: auto auto auto 1fr; height: 100vh; min-width: 900px; }
+
+/* ---- top bar */
+.top { display: flex; align-items: center; gap: 12px; padding: 9px 16px; color: #fff; background: linear-gradient(135deg, var(--grad-1), var(--grad-2)); }
+.top .brand h1 { font-size: 15px; }
+.top .spacer { flex: 1; }
+.top-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.top-actions .btn { padding: 6px 12px; font-size: 12.5px; flex: 0 0 auto; }
+.top-actions .btn.secondary { background: rgba(255, 255, 255, .16); color: #fff; border-color: rgba(255, 255, 255, .28); box-shadow: none; }
+.top-actions .btn.secondary:disabled { opacity: .5; }
+.top-actions .btn.ghost { color: #fff; border-color: rgba(255, 255, 255, .45); }
+
+/* ---- options, left to right */
+.opts { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-start; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.opts .o { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.o-kw { flex: 1 1 230px; max-width: 320px; }
+.o-where { flex: 1 1 250px; max-width: 340px; }
+.o-num { flex: 0 1 270px; }
+.o-go { flex: 1 1 250px; max-width: 320px; }
+.opts .input { width: 100%; }
+.opts.locked .o { opacity: .55; pointer-events: none; }
+.opts.locked .o-go .btn { pointer-events: none; }
+.btn.wide { width: 100%; }
+.btn.small { padding: 5px 12px; font-size: 12.5px; }
+.geo-sum { margin: 2px 0 0; }
+
+/* ---- progress strip */
+.prog { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 6px 22px; align-items: center; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.prog .count { margin-bottom: 6px; }
+.prog-right { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; min-width: 0; }
+.prog-right .msg { flex: 1 1 360px; margin: 0; }
+.prog-right .help { flex-basis: 100%; }
+
+/* ---- live data table */
+.data { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.data-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: 12.5px; }
+.data-info { color: var(--muted); margin-right: auto; font-variant-numeric: tabular-nums; }
+.data-bar .input { width: 220px; }
+.data-scroll { flex: 1; overflow: auto; margin: 0 16px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+#dataTable { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+#dataTable th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 7px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); white-space: nowrap; }
+#dataTable td { padding: 6px 10px; border-bottom: 1px solid var(--border); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dataTable tr:hover td { background: var(--surface-2); }
+#dataTable td.n { color: var(--muted); }
+#dataTable td.nf, #dataTable td.dash { color: var(--muted); }
+#dataTable td.ok { font-weight: 600; }
+#dataTable tr.fresh td { animation: fresh 1.6s ease-out; }
+@keyframes fresh { from { background: var(--ok-soft); } to { background: transparent; } }
+.data-empty { margin: 0; padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ---- dialogs (places picker, columns, history, Google) */
+.quick { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
+.quick label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.quick select { font: inherit; padding: 4px 8px; max-width: 200px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; }
+.quick select:disabled { opacity: .5; }
+.col-dialog { width: min(560px, 92vw); }
+.col-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 14px; padding: 10px 14px 14px; }
+.colrow { border-radius: 6px; }
+.overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(8, 9, 20, .55); }
+.dialog { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 20px 60px rgba(0, 0, 0, .45); overflow: hidden; }
+.dialog-bar { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); font-size: 12.5px; }
+.panehint { color: var(--muted); margin-right: auto; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.geo-dialog { width: min(1100px, 94vw); height: min(640px, 86vh); }
+.geo-cols { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 10px; min-height: 0; }
+.geo-cols .gsec { min-height: 0; display: flex; flex-direction: column; }
+.geo-cols .glist { flex: 1; max-height: none; }
+.hist-dialog { width: min(640px, 92vw); max-height: 80vh; }
+.hist-dialog .history { max-height: none; padding: 10px; overflow: auto; }
+.pane-dialog { width: min(1200px, 94vw); height: min(860px, 92vh); }
+#paneHost { flex: 1; position: relative; min-height: 0; background: var(--surface-2); }
+.pane-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
+
+.history { display: flex; flex-direction: column; gap: 6px; }
+.hrow { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 9px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; }
+.hrow .t { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .m { grid-column: 1; color: var(--muted); font-size: 11px; }
+.hrow .b { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 2px; align-items: center; }
+
+.demo { position: fixed; right: 12px; bottom: 12px; background: var(--surface); padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+.dialog-bar .btn { width: auto; flex: none; }
+
+/* ---- extra option blocks, task file, docked Google Maps panel */
+.o-src { flex: 0 1 230px; }
+.seg.four { grid-template-columns: repeat(4, 1fr); }
+#uaeFill { align-self: flex-start; padding: 0; }
+.data-row { flex: 1; display: flex; gap: 12px; min-height: 0; margin: 0 16px 14px; }
+.data-row .data-scroll { flex: 1; margin: 0; min-width: 0; }
+.dock { flex: 0 0 380px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.dock-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--surface-2); font-size: 12px; }
+#dockHost { flex: 1; min-height: 260px; position: relative; background: var(--surface-2); }
