@@ -102,7 +102,7 @@ p { margin: 6px 0; }
 .hero-top { display: flex; justify-content: space-between; align-items: center; }
 .brand { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .brand > div { min-width: 0; }
-.logo { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: rgba(255, 255, 255, .18); font-size: 18px; }
+.logo { flex: none; width: 34px; height: 34px; border-radius: 10px; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55), 0 2px 6px rgba(0, 0, 0, .25); }
 .hero h1 { font-size: 16px; letter-spacing: .2px; }
 .hero h1 span { font-weight: 400; opacity: .85; }
 .tagline { margin: 0; font-size: 11px; opacity: .85; }

@@ -21,9 +21,12 @@ through the **visible LinkedIn page you already have open**. It stops the moment
 | `background.js` | Service worker. Owns job state, limits, queue, follow-up scheduling, lead DB, activity log, CSV, tab binding, crash recovery. |
 | `content.js` | Runs on linkedin.com. Reads the visible page and clicks/types in the visible UI when told to. Never decides *whether* to act. |
 | `popup.html` / `popup.css` / `popup.js` | The ~400 px dashboard (light + dark, keyboard accessible). |
+| `icons/icon16.png`, `icon32.png`, `icon48.png`, `icon128.png` | Toolbar / extensions-page icons (Chrome needs PNG in the manifest). A gradient tile with a white paper plane, matching the popup header. |
+| `icons/icon.svg` | Editable source artwork for the PNGs. |
 | `README.md` | This file. |
 
-No icons are bundled; Chrome shows its default toolbar icon until you add some (optional).
+To change the icon, edit `icons/icon.svg` and re-export it to the four PNG sizes (any SVG-to-PNG tool works, e.g. Inkscape or
+a browser screenshot of the SVG at 16 / 32 / 48 / 128 px with a transparent background), then reload the extension.
 
 ---
 
