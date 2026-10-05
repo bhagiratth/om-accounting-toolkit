@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="LeadPilot LinkedIn">
+  <!-- Source artwork for icon16/32/48/128.png (Chrome needs PNG, not SVG, in the manifest).
+       Colours match the popup header gradient. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4338ca"/>
+      <stop offset="0.55" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#db2777"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="124" height="124" rx="28" fill="url(#bg)"/>
+  <!-- paper plane: tip (110,18), left wing (16,57), fold (55,73), tail (71,110) -->
+  <path d="M110 18 L16 57 L55 73 Z" fill="#ffffff"/>
+  <path d="M110 18 L55 73 L71 110 Z" fill="#ffffff" fill-opacity="0.78"/>
+</svg>
