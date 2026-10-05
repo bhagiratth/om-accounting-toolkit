@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeadPilot LinkedIn</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="hero">
+    <div class="hero-top">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">✈</span>
+        <div>
+          <h1>LeadPilot <span>LinkedIn</span></h1>
+          <p class="tagline">Compliance-first outreach assistant</p>
+        </div>
+      </div>
+      <button id="themeBtn" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☾</button>
+    </div>
+    <div class="account-row">
+      <div class="segmented" role="radiogroup" aria-label="Account to work with">
+        <button type="button" role="radio" data-mode="personal" aria-checked="true">Personal Profile</button>
+        <button type="button" role="radio" data-mode="company" aria-checked="false">Company Page</button>
+      </div>
+      <select id="companySelect" aria-label="Administered Company Page" hidden></select>
+    </div>
+  </header>
+
+  <section class="controlbar" aria-label="Automation controls">
+    <div class="state-row">
+      <span id="statePill" class="pill s-idle" role="status">Idle</span>
+      <span id="stateDetail" class="state-detail" aria-live="polite"></span>
+    </div>
+    <div id="progress" class="progress" role="progressbar" aria-label="Run progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="progressFill" class="progress-fill"></div>
+    </div>
+    <div class="btns">
+      <button id="startBtn" class="btn btn-primary" type="button">▶ Start</button>
+      <button id="pauseBtn" class="btn btn-pause" type="button">❚❚ Pause Automation</button>
+      <button id="stopBtn" class="btn btn-stop" type="button">■ Stop</button>
+    </div>
+  </section>
+
+  <div id="banner" class="banner" role="alert" hidden></div>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" id="tab-dashboard" aria-controls="panel-dashboard" aria-selected="true">Dashboard</button>
+    <button type="button" role="tab" id="tab-leads" aria-controls="panel-leads" aria-selected="false" tabindex="-1">Leads</button>
+    <button type="button" role="tab" id="tab-posts" aria-controls="panel-posts" aria-selected="false" tabindex="-1">Posts</button>
+    <button type="button" role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">Settings</button>
+  </nav>
+
+  <main id="main">
+    <!-- ───────────── Dashboard ───────────── -->
+    <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
+      <div class="tabline">
+        <span id="tabInfo" class="muted">No LinkedIn tab attached</span>
+        <button id="attachBtn" class="btn btn-sm" type="button">Attach this tab</button>
+      </div>
+
+      <div class="stats" id="stats">
+        <div class="stat"><span class="stat-label">Leads</span><strong id="stLeads">0</strong><span class="stat-sub">in local list</span></div>
+        <div class="stat"><span class="stat-label">Connections today</span><strong id="stConn">0</strong><span class="stat-sub" id="stConnSub"></span><div class="mini"><i id="stConnBar"></i></div></div>
+        <div class="stat"><span class="stat-label">Messages today</span><strong id="stMsg">0</strong><span class="stat-sub" id="stMsgSub"></span><div class="mini"><i id="stMsgBar"></i></div></div>
+        <div class="stat"><span class="stat-label">Follow-ups due</span><strong id="stDue">0</strong><span class="stat-sub" id="stDueSub"></span><div class="mini"><i id="stFuBar"></i></div></div>
+        <div class="stat"><span class="stat-label">Posts published</span><strong id="stPosts">0</strong><span class="stat-sub" id="stPostsSub"></span><div class="mini"><i id="stPostBar"></i></div></div>
+        <div class="stat"><span class="stat-label">Automation</span><strong id="stState">Idle</strong><span class="stat-sub" id="stStateSub"></span></div>
+      </div>
+
+      <div id="approvalCard" class="card approval" hidden>
+        <div class="approval-head">
+          <span id="apAction" class="badge">Connection request</span>
+          <span id="apStep" class="muted"></span>
+        </div>
+        <p class="lead-line"><strong id="apName"></strong> <span id="apMeta" class="muted"></span></p>
+        <ul id="apWarnings" class="warnings"></ul>
+        <label for="apText" id="apLabel">Message — edit as needed, then press Send</label>
+        <textarea id="apText" rows="6" spellcheck="true"></textarea>
+        <div class="counter" id="apCount" aria-live="polite"></div>
+        <p id="apAuto" class="note" hidden>Conservative Auto Mode will send this draft in a few seconds. Press “Pause Automation” to stop it.</p>
+        <div class="btns">
+          <button id="apSend" class="btn btn-primary" type="button">Send</button>
+          <button id="apRegen" class="btn" type="button">Regenerate</button>
+          <button id="apSkip" class="btn" type="button">Skip lead</button>
+        </div>
+        <p class="hint">Nothing is sent until you press Send. LeadPilot then performs the action through the visible LinkedIn page.</p>
+      </div>
+
+      <div class="card" id="runCard">
+        <h2>Run</h2>
+        <div class="grid2">
+          <label>Action
+            <select id="actionSel">
+              <option value="connect">Connection requests</option>
+              <option value="message">Message new connections</option>
+              <option value="followup">Follow-ups due</option>
+            </select>
+          </label>
+          <label>Template
+            <select id="tplSel"></select>
+          </label>
+        </div>
+        <div class="radio-row" role="radiogroup" aria-label="Which leads">
+          <label class="check"><input type="radio" name="src" value="all" checked> All eligible</label>
+          <label class="check"><input type="radio" name="src" value="selected"> Selected leads (<span id="selCount">0</span>)</label>
+        </div>
+        <p class="hint" id="runHint"></p>
+        <p class="note" id="modeNote"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Activity log</h2>
+          <label class="check small"><input type="checkbox" id="logProblems"> problems only</label>
+        </div>
+        <ol id="logList" class="log" aria-label="Activity log"></ol>
+        <div class="btns left">
+          <button id="logMore" class="btn btn-sm" type="button" hidden>Show more</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── Leads ───────────── -->
+    <section id="panel-leads" role="tabpanel" aria-labelledby="tab-leads" hidden>
+      <p id="leadsModeNote" class="note" hidden>Lead collection and outreach belong to your Personal Profile. Switch to “Personal Profile” above to use them.</p>
+      <div class="toolbar">
+        <button id="collectBtn" class="btn btn-primary" type="button">Collect from this page</button>
+        <button id="openSearchBtn" class="btn" type="button">Open LinkedIn search</button>
+      </div>
+      <p class="hint">Collects only the people cards that are visible on the LinkedIn people-search page you opened (no scrolling or paging on its own).</p>
+      <div class="toolbar">
+        <input id="leadFilter" type="search" placeholder="Filter by name, company, title…" aria-label="Filter leads">
+        <select id="leadStatus" aria-label="Filter by status">
+          <option value="all">All</option>
+          <option value="new">New (not contacted)</option>
+          <option value="due">Follow-up due</option>
+          <option value="pending">Connection pending</option>
+          <option value="connected">Connected</option>
+          <option value="replied">Replied</option>
+          <option value="dnc">Do not contact</option>
+          <option value="converted">Converted</option>
+          <option value="paused">Paused</option>
+        </select>
+      </div>
+      <div class="toolbar small">
+        <button id="selAllBtn" class="btn btn-sm" type="button">Select shown</button>
+        <button id="selNoneBtn" class="btn btn-sm" type="button">Clear selection</button>
+        <span id="leadInfo" class="muted"></span>
+      </div>
+      <ul id="leadList" class="leads" aria-label="Leads"></ul>
+      <div class="btns left"><button id="leadMore" class="btn btn-sm" type="button" hidden>Show more</button></div>
+
+      <details class="card">
+        <summary>Add a lead manually</summary>
+        <div class="grid2">
+          <label class="span2">Profile URL<input id="nlUrl" type="url" placeholder="https://www.linkedin.com/in/jane-doe/"></label>
+          <label>First name<input id="nlFirst" type="text"></label>
+          <label>Last name<input id="nlLast" type="text"></label>
+          <label>Job title<input id="nlTitle" type="text"></label>
+          <label>Company<input id="nlCompany" type="text"></label>
+        </div>
+        <button id="nlAdd" class="btn" type="button">Add lead</button>
+      </details>
+
+      <details class="card" open>
+        <summary>Export CSV</summary>
+        <fieldset>
+          <legend>Fields to export</legend>
+          <div id="csvFields" class="checks"></div>
+        </fieldset>
+        <label>Rows
+          <select id="csvScope">
+            <option value="all">All leads</option>
+            <option value="filtered">Currently filtered</option>
+            <option value="selected">Selected only</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="csvNeutral" checked> Neutralise spreadsheet formulas (adds a leading ' to cells starting with = + - @)</label>
+        <button id="exportBtn" class="btn btn-primary" type="button">Download CSV</button>
+      </details>
+    </section>
+
+    <!-- ───────────── Posts ───────────── -->
+    <section id="panel-posts" role="tabpanel" aria-labelledby="tab-posts" hidden>
+      <div class="card">
+        <h2>Compose</h2>
+        <p id="postAs" class="note"></p>
+        <div class="grid2">
+          <label>Template
+            <select id="postTpl"></select>
+          </label>
+          <div class="align-end"><button id="postApply" class="btn btn-sm" type="button">Apply template</button></div>
+        </div>
+        <label for="postText">Post text</label>
+        <textarea id="postText" rows="7" spellcheck="true" placeholder="Write your post… placeholders: {{date}} {{weekday}} {{month}} {{year}} {{companyName}}"></textarea>
+        <div class="counter" id="postCount"></div>
+        <div class="preview-label">Preview</div>
+        <div id="postPreview" class="preview" aria-live="polite"></div>
+        <label>Schedule locally (optional)
+          <input type="datetime-local" id="postWhen">
+        </label>
+        <p class="hint" id="postSchedHint"></p>
+        <div class="btns">
+          <button id="postSave" class="btn" type="button">Save draft / schedule</button>
+          <button id="postPublish" class="btn btn-primary" type="button">Publish now…</button>
+          <button id="postNew" class="btn btn-sm" type="button">New</button>
+        </div>
+        <p class="hint">Publishing opens LinkedIn’s own “Start a post” box in the attached tab, checks who the post will be published as, types your text and presses Post — only after you confirm.</p>
+      </div>
+      <div class="card">
+        <h2>Engagement</h2>
+        <p class="hint">Open the page that lists your posts (your profile’s Posts / Activity page or your Company Page posts) and read the counts that are visible there.</p>
+        <button id="engageBtn" class="btn" type="button">Read engagement from this page</button>
+      </div>
+      <div class="card">
+        <h2>Post history</h2>
+        <ul id="postList" class="posts" aria-label="Post history"></ul>
+      </div>
+    </section>
+
+    <!-- ───────────── Settings ───────────── -->
+    <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <details class="card" open>
+        <summary>Targeting</summary>
+        <label>Target job titles (comma separated)<input id="s_titles" type="text" placeholder="Founder, CEO, CFO, Ecommerce Manager"></label>
+        <div class="grid2">
+          <label>Industry<input id="s_industry" type="text"></label>
+          <label>Location<input id="s_location" type="text"></label>
+          <label>Company size
+            <select id="s_companySize">
+              <option value="">Any</option><option>1-10</option><option>11-50</option><option>51-200</option><option>201-500</option><option>501-1000</option><option>1001-5000</option><option>5001-10000</option><option>10001+</option>
+            </select>
+          </label>
+          <label>Keywords<input id="s_keywords" type="text"></label>
+        </div>
+        <p class="hint">Titles, keywords, industry and location are put into the LinkedIn search for you. Apply location / industry / company-size filters in LinkedIn’s own filter bar.</p>
+        <button class="btn" type="button" data-save="targeting">Save targeting</button>
+      </details>
+
+      <details class="card" open>
+        <summary>Daily activity budget &amp; pacing</summary>
+        <div class="grid2">
+          <label>Connection requests / day<input id="s_limit_connections" type="number" min="0" step="1"></label>
+          <label>Messages / day<input id="s_limit_messages" type="number" min="0" step="1"></label>
+          <label>Follow-ups / day<input id="s_limit_followUps" type="number" min="0" step="1"></label>
+          <label>Posts / day<input id="s_limit_posts" type="number" min="0" step="1"></label>
+          <label>Cooldown after a send, min (s)<input id="s_cdMin" type="number" min="30" step="5"></label>
+          <label>Cooldown after a send, max (s)<input id="s_cdMax" type="number" min="30" step="5"></label>
+          <label class="span2">Minimum gap between profile views (s)<input id="s_gap" type="number" min="10" step="5"></label>
+        </div>
+        <p class="hint" id="capHint"></p>
+        <button class="btn" type="button" data-save="limits">Save limits</button>
+      </details>
+
+      <details class="card">
+        <summary>Approval mode</summary>
+        <p class="note ok">Default: <strong>Review Before Send</strong> — you see, edit and approve every connection request and message.</p>
+        <label class="check"><input type="checkbox" id="s_auto"> Enable Conservative Auto Mode</label>
+        <div class="grid2">
+          <label>Max auto-sends per run<input id="s_autoMax" type="number" min="1" max="20" step="1"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="s_autoAck"> I understand: auto mode sends fully-personalised drafts without asking, only within my daily budget, and stops immediately on any LinkedIn warning, CAPTCHA, verification or restriction.</label>
+        <p class="hint">Auto mode still falls back to manual review for any lead whose data is incomplete. Templates must contain lead variables such as {{firstName}}.</p>
+        <button class="btn" type="button" data-save="mode">Save mode</button>
+      </details>
+
+      <details class="card">
+        <summary>Follow-up schedule</summary>
+        <p class="hint">Day 0 is your connection request (or first message). Each step is skipped for leads who replied, asked not to be contacted, converted or are paused.</p>
+        <div id="fuRows"></div>
+        <button class="btn" type="button" data-save="followups">Save schedule</button>
+      </details>
+
+      <details class="card">
+        <summary>Message templates</summary>
+        <div class="grid2">
+          <label>Template<select id="tplPick"></select></label>
+          <label>Type
+            <select id="tplKind">
+              <option value="connect">Connection note (≤ 300 chars)</option>
+              <option value="message">First message</option>
+              <option value="followup">Follow-up</option>
+              <option value="post">Post</option>
+            </select>
+          </label>
+        </div>
+        <label>Name<input id="tplName" type="text"></label>
+        <label for="tplBody">Body</label>
+        <textarea id="tplBody" rows="6"></textarea>
+        <div class="chips-row" id="varChips" aria-label="Insert a variable"></div>
+        <div class="counter" id="tplCount"></div>
+        <div class="preview-label">Preview with a sample lead</div>
+        <div id="tplPreview" class="preview"></div>
+        <div class="btns">
+          <button id="tplSave" class="btn btn-primary" type="button">Save template</button>
+          <button id="tplNew" class="btn" type="button">New</button>
+          <button id="tplDelete" class="btn btn-stop" type="button">Delete</button>
+        </div>
+      </details>
+
+      <details class="card">
+        <summary>Company Pages</summary>
+        <p class="hint">Only Pages you administer can be used. Open the <strong>admin view</strong> of the Page in the attached tab, then add it.</p>
+        <ul id="cpList" class="plain"></ul>
+        <button id="cpAdd" class="btn" type="button">Add the Page open in the attached tab</button>
+      </details>
+
+      <details class="card">
+        <summary>Post publishing</summary>
+        <label class="check"><input type="checkbox" id="s_sched"> Publish scheduled posts automatically when they are due</label>
+        <label class="check"><input type="checkbox" id="s_schedAck"> I deliberately authorise publishing my scheduled posts without a further click (the attached LinkedIn tab will be used at the scheduled time).</label>
+        <p class="hint">Off by default. When off, a due post just waits for you to press Publish.</p>
+        <button class="btn" type="button" data-save="publishing">Save publishing</button>
+      </details>
+
+      <details class="card">
+        <summary>Data</summary>
+        <p class="hint">Everything is stored locally in this browser (chrome.storage.local). Nothing is uploaded.</p>
+        <div class="btns left">
+          <button class="btn btn-sm btn-stop" type="button" data-reset="log">Clear activity log</button>
+          <button class="btn btn-sm btn-stop" type="button" data-reset="posts">Clear post history</button>
+          <button class="btn btn-sm btn-stop" type="button" data-reset="leads">Delete all leads</button>
+        </div>
+      </details>
+      <p class="foot muted" id="verLine"></p>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="popup.js"></script>
+</body>
+</html>

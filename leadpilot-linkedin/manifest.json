@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "LeadPilot LinkedIn",
+  "version": "1.0.0",
+  "description": "Compliance-first LinkedIn lead-generation assistant. Review-before-send outreach, local lead list, follow-up reminders and post publishing through the visible LinkedIn UI.",
+  "minimum_chrome_version": "110",
+  "action": {
+    "default_title": "LeadPilot LinkedIn",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "alarms", "scripting"],
+  "host_permissions": ["https://www.linkedin.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
