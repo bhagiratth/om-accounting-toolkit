@@ -32,13 +32,16 @@ a browser screenshot of the SVG at 16 / 32 / 48 / 128 px with a transparent back
 
 ## 1. Installation
 
-1. Download / clone this folder (`leadpilot-linkedin/`).
-2. Open `chrome://extensions`.
-3. Switch **Developer mode** on (top-right).
-4. Click **Load unpacked** and select the `leadpilot-linkedin` folder (the one containing `manifest.json`).
-5. Pin the extension (puzzle-piece menu → pin) so the popup is one click away.
+1. Get the folder: clone the repo, or unzip the zip you were given (right-click → **Extract All…** on Windows; double-click on macOS).
+2. Open the extracted folder and check that you can see **`manifest.json` directly inside it**, next to `background.js`, `popup.html` and `icons/`. That is the folder to load. (If you see a single folder with the same name inside, open it and use that one.)
+3. Open `chrome://extensions`.
+4. Switch **Developer mode** on (top-right).
+5. Click **Load unpacked** and select that folder. Chrome saying *"Manifest file is missing or unreadable"* means you picked a folder that does not contain `manifest.json` (usually the outer one, or the zip itself).
+6. Pin the extension (puzzle-piece menu → pin) so the popup is one click away. The popup footer (Settings tab) shows the installed version.
 
 There is nothing to install or compile.
+
+**First run:** open linkedin.com in the tab you want to use, click the LeadPilot icon (the **Getting started** card on the Dashboard shows the next step), and try one lead in Review Before Send mode. If something does not work, see *Diagnostics* below.
 
 ## 2. How to reload after code changes
 
@@ -95,11 +98,14 @@ selected Page, nothing is posted.
 2. On a people-search results page press **Collect from this page**. LeadPilot reads only the result cards that are
    **visible** there (name, headline → job title/company, location, connection degree, profile URL). It does not scroll,
    page through results, or open profiles to collect.
-3. Leads are de-duplicated by **normalised profile URL** (`https://www.linkedin.com/in/<slug>/`, lower-case, no query
-   string). "LinkedIn Member" (hidden-name) cards are skipped.
+3. Leads are de-duplicated by **normalised profile URL** (`https://www.linkedin.com/in/<slug>/`, lower-cased for comparison,
+   no query string). The profile URL that is opened (and exported) keeps the slug's **original case**, because LinkedIn's opaque
+   ids (`ACoAA…`) are case-sensitive. "LinkedIn Member" (hidden-name) cards are skipped.
 4. Review them in the **Leads** tab: filter, tick the ones you want, edit any field, add notes, mark
    *Replied / Do Not Contact / Converted*, or **Pause** a lead.
 5. Industry is not visible on result cards; it is pre-filled from your *Target industry* setting and is editable.
+6. Search results never contain e-mail addresses, so the **Email** field starts empty. You can type one yourself, or fill
+   it in bulk from LinkedIn's own data export — see *E-mail addresses (optional)* below.
 
 ## 7. Connection workflow (Personal Profile, with your confirmation)
 
@@ -196,12 +202,13 @@ to filter. The log keeps the last 1,000 entries locally; clear it under Settings
 ## 13. CSV export
 
 **Leads → Export CSV**: tick exactly the fields you want, choose *All / Currently filtered / Selected*, press
-**Download CSV**. Available fields: First Name, Last Name, Profile URL, Job Title, Company, Location, Industry,
-Connection Status, Message Status, Last Contacted, Next Follow-up, Source, Notes.
+**Download CSV**. Available fields (14): First Name, Last Name, **Email**, Profile URL, Job Title, Company, Location,
+Industry, Connection Status, Message Status, Last Contacted, Next Follow-up, Source, Notes.
 
 * RFC 4180: CRLF line endings, fields containing commas, quotes or line breaks are double-quoted, quotes doubled.
 * UTF-8 with a BOM so Excel opens accents correctly.
-* Columns appear in the order above, with exactly the selected fields.
+* Columns appear in the order above, with exactly the selected fields. (If you saved a field selection before the Email
+  column existed, Email is added to it once so it does not silently go missing from your exports; you can untick it.)
 * By default cells that begin with `=`, `+`, `-` or `@` get a leading `'` so spreadsheet software cannot execute
   scraped text as a formula. Untick the option to export raw values.
 
@@ -224,7 +231,9 @@ identity could not be verified*, *Interrupted (extension restarted)*.
 
 The **❚❚ Pause Automation** button is always visible (it sticks to the top of the popup) and the toolbar badge shows the
 state (`ON`, `II`, `?` = waiting for you, `ERR`, `X`). Warning text is only matched inside dialogs/toasts/alerts or
-challenge URLs, so ordinary feed posts that mention the word "captcha" cannot trigger it.
+challenge URLs, so ordinary feed posts that mention the word "captcha" cannot trigger it. A generic phrase such as "try again later"
+only counts together with a limit-type word, and a hidden or tiny reCAPTCHA badge is not treated as a challenge — only a visible,
+challenge-sized widget is.
 
 **Service-worker restarts:** state is persisted. If Chrome restarts the worker *while a send was in flight*, LeadPilot
 marks the run **Interrupted** and does **not** retry (it cannot know whether LinkedIn received the action) — check
@@ -237,7 +246,9 @@ LinkedIn, then start again. If it restarts while only reading a profile, the lea
   cookie handling, no request spoofing.
 * No private/undocumented LinkedIn APIs and **no network requests of its own** — it only reads/clicks the page DOM.
 * No hidden tabs/windows, no background crawling, no auto-scrolling or auto-paging of search results.
-* No scraping of anything not visibly on the page (no emails, phone numbers, or content behind access controls).
+* No scraping of anything not visibly on the page: it never opens **Contact info**, never reads e-mail addresses or phone
+  numbers from LinkedIn pages, and never looks at content behind access controls. E-mail addresses reach the lead list only
+  because **you** type them or **you** import LinkedIn's own Connections.csv (see *E-mail addresses (optional)*).
 * No messages to non-connections, no InMail, no group/event invitations, no "withdraw invitation", no profile views for
   the sake of views, no likes/comments/endorsements.
 * No personal outreach from a Company Page; no posting without your click (except scheduled posts you deliberately
@@ -261,8 +272,8 @@ All of these are in **`content.js`**:
 
 | What broke | Function(s) to update |
 |---|---|
-| **Profile / card discovery** (no cards found on a search page; profile top card not found) | `findResultCards()` (with helpers `resolveCards`, `cardsFromAnchors`), `profileTopCard()`, `profileH1()` |
-| **Name extraction** | `extractName(card, profileUrl)` for search cards, `extractProfileName()` for profile pages, `cleanName()` |
+| **Profile / card discovery** (no cards found on a search page; profile top card not found) | `findResultCards()` and the strategy list `resultCardLayers()` (helpers `resolveCards`, `cardsBySiblingBlocks`, `cardsFromAnchors`), `profileTopCard()`, `profileH1()` |
+| **Name extraction** | `extractName(card, profileUrl)` for search cards, `extractProfileName()` for profile pages (the name element is found by `profileH1()`: `<h1>`, then heading roles, then the element whose text equals the name in the tab title), `cleanName()` |
 | **Company extraction** | `extractCompany(card, name)` for search cards, `extractProfileCompany(top, headline)` for profile pages, `splitHeadline()` |
 | **Job-title extraction** | `extractJobTitle(card, name)` (via `cardHeadline()`), `extractProfileHeadline()` / `extractProfileJobTitle()`, `splitHeadline()` |
 | **Profile URL extraction** | `extractProfileUrl(card)`; URL normalisation lives in `normalizeProfileUrl()` (content.js) **and** the identical copy in `background.js` — change both |
@@ -284,18 +295,88 @@ If a LinkedIn UI language other than English is used, the text-matched labels (`
 
 ---
 
+## E-mail addresses (optional)
+
+LinkedIn does **not** show e-mail addresses on search results, and LeadPilot deliberately does not go looking for them
+(no opening of *Contact info*, no reading of hidden fields, no guessing of addresses). There are two legitimate ways
+to get an address into a lead:
+
+1. **Type it yourself** — in the lead editor (**Edit** on a lead row) or in *Add a lead manually*. It is checked, trimmed and stored in lower
+   case; an entry that does not look like an address (for example `nope`, or one starting with `=`, `+` or `-`) is rejected.
+2. **Import LinkedIn's own export of your connections** (recommended for bulk):
+   1. On LinkedIn: **Me → Settings & Privacy → Data privacy → Get a copy of your data**, tick **Connections**, press
+      **Request archive**. LinkedIn e-mails you a link (usually within minutes for Connections only; the complete archive can
+      take up to a day). Download and unzip it. The file you need is **`Connections.csv`**.
+   2. In LeadPilot: **Leads → Import emails from LinkedIn's connections export**, choose `Connections.csv`
+      (or paste its content), optionally tick *Also add connections that are not in my lead list yet*, press **Import**.
+   3. On **Windows**, Chrome closes an extension popup while the file picker is open. If that happens, press **↗** at the top of
+      the popup — LeadPilot opens in a normal browser tab where the picker works — or use the paste box instead.
+
+Once a lead has an address, the CSV export carries it in the **Email** column (right after *Last Name*).
+
+How the import behaves:
+
+* It reads the file **inside your browser**; nothing is uploaded and nothing is requested from LinkedIn.
+* A lead is matched by **normalised profile URL**. If that fails (leads collected from search results sometimes carry an
+  opaque `ACoAA…` URL while the export has the vanity URL) it falls back to **exact first name + last name + the same
+  company**, and only when **exactly one** of your leads fits. It never matches by name alone, because mailing the wrong
+  person is worse than missing an address.
+* An address is filled in **only where the lead has none**. If you already have a different address for that lead, yours is
+  kept and the row is counted under *kept their existing email*. Re-importing the same file changes nothing.
+* Matched leads are marked **Connected** (the export only contains your connections). Connections that are not in your lead
+  list are added only if you tick the option; they are labelled with the source *LinkedIn export <date>*.
+* The file only contains an address for connections who **allowed their connections to see it**, so many rows are blank.
+  That is expected — it is LinkedIn's privacy setting, not a fault. The result line counts them as *without a shared email*.
+* Addresses never appear in the activity log; only counts do.
+
+The **Leads** filter has *Has email* / *No email*, and each lead row shows `✉ address` when there is one.
+
+**Using addresses responsibly.** Having an address is not permission to send marketing e-mail. Use it only in line with the
+person's consent and the law that applies to you (for example GDPR/PECR in the EU and UK, CAN-SPAM in the US, India's DPDP
+Act), identify yourself, and always give an easy way to opt out. LeadPilot never sends e-mail — it only stores addresses
+and exports them with the rest of your lead data. This is general guidance, not legal advice.
+
+---
+
+## Diagnostics (when something does not work)
+
+Settings → **Diagnostics** (or the **Copy diagnostics** button in a red / yellow banner, or on the *Getting started* card):
+
+1. Open the LinkedIn page where it fails (for example a people-search results page) in the attached tab.
+2. Press **Run diagnostics**, then **Copy report**, and paste the report to whoever maintains the extension.
+
+The report contains the extension version and state, the browser version, what the content script found on the page (how many result cards each discovery strategy sees, which buttons were recognised on a profile, whether a warning was detected) and the last 20 log lines. It deliberately describes only the **structure** of the page: every text, label, alt text and link is replaced by a length or a placeholder, lead names in the log are replaced by `[lead]`, and message bodies are cut. Only generic UI words such as "Connect", "Message" or "2nd" stay readable. When a run stops because of what a page looked like (*Navigation timeout*, *Missing selector*, *LinkedIn page changed*, *Recipient could not be verified*), a snapshot of that page's structure is saved at that moment and included in the next report as `lastFailure` — so it is still there even if you have moved the tab elsewhere before copying the report. The last report is kept in `chrome.storage.local` (`lp_diag`, snapshot in `lp_failure`).
+
+Developers can run the same checks from DevTools: choose the **"LeadPilot LinkedIn"** execution context and call `__leadPilotContent.diagnose()`.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| "No LinkedIn tab attached" | Open linkedin.com, click the extension, press **Attach this tab**. |
+| Chrome: "Manifest file is missing or unreadable" | You selected the wrong folder. Select the one that directly contains `manifest.json`. |
+| Popup says no tab attached | Open linkedin.com, click the extension, press **Attach this tab**. |
+| Collect from this page finds nothing | You are not on a people-search results page, the page is still loading, or LinkedIn changed its markup. Run **Diagnostics** (see above). |
 | Start is greyed out | Company Page mode is selected, a restriction flag is set, or a run is already active. |
 | "Daily limit reached" | Today's budget is used; change it in Settings (hard ceilings apply) or wait until tomorrow. |
 | "No eligible leads" | Leads already contacted, replied, paused, converted, or *Do Not Contact*. |
 | A step stopped with *Missing selector* | LinkedIn changed markup — see section 16. |
 | Draft shows `{{company}}` | That lead has no company. Edit the lead or the text; Send stays disabled until fixed. |
+| The popup closes when I choose `Connections.csv` (Windows) | Chrome closes extension popups while the file picker is open. Press **↗** at the top to open LeadPilot in a tab, or paste the file's content into the box instead. |
+| Import says there is no header row / no "Email Address" column | You chose a different file. Use `Connections.csv` from LinkedIn's *Get a copy of your data → Connections*; keep the header line (`First Name,Last Name,URL,Email Address,…`). |
+| Import added very few emails | LinkedIn only includes an address for connections who allow their connections to see it. Blank rows are normal; the result line shows how many. Leads with an opaque `ACoAA…` URL are matched by exact name + company, so a lead with no company can only be matched by URL. |
 
 ## Data
 
 Everything lives in `chrome.storage.local` under the keys `lp_settings`, `lp_leads`, `lp_log`, `lp_job`, `lp_counters`,
-`lp_posts`, `lp_tab`. Remove the extension (or use Settings → Data) to delete it. Nothing is transmitted anywhere.
+`lp_posts`, `lp_tab`, `lp_diag` (last diagnostics report) and `lp_failure` (structure snapshot of the last failing page).
+Remove the extension (or use Settings → Data) to delete it. Nothing is transmitted anywhere. Lead records hold 14 fields,
+including the optional e-mail address.
+
+## Version history
+
+| Version | Changes |
+|---|---|
+| 1.1.0 | **Email** field on leads (validated, editable, filterable via *Has email / No email*), **Import emails from LinkedIn's Connections.csv**, Email column in the CSV export, *Open in a tab* button for the Windows file-picker problem. |
+| 1.0.2 | Profile pages open reliably on the real site: case-preserving profile URLs (opaque `ACoAA…` ids), multi-layer name detection, "page not available" detection, page facts in errors, `lastFailure` snapshot in diagnostics. |
+| 1.0.1 | Diagnostics report, *Getting started* card, sturdier card discovery, clearer error hints. |
+| 1.0.0 | First release. |

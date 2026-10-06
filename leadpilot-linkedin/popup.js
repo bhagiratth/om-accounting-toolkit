@@ -33,13 +33,13 @@ const BUDGET = { connect: 'connections', message: 'messages', followup: 'followU
 const HINTS = {
   LOGIN_REQUIRED: 'Sign in to LinkedIn in the attached tab, then press Resume.',
   CAPTCHA_SECURITY: 'LinkedIn is asking you to verify something. Resolve it yourself in the LinkedIn tab — LeadPilot never touches it — then press Resume. Consider stopping for today.',
-  RATE_WARNING: 'LinkedIn showed a limit or unusual-activity notice. Do not push on today: lower your daily limits in Settings and Resume only after the notice is gone.',
+  RATE_WARNING: 'LinkedIn showed a limit or unusual-activity notice. Do not push on today: lower your daily limits in Settings and Resume only after the notice is gone. If it is about limited personalised invitations, leave the note empty and press “Send without note”.',
   ACCOUNT_RESTRICTED: 'LinkedIn says the account is restricted. All actions are locked. Resolve it directly with LinkedIn; only then use “Clear restriction flag”.',
-  PAGE_CHANGED: 'The LinkedIn page did not look as expected, so the run stopped (no retry loop). See README → “When LinkedIn changes its markup”.',
-  MISSING_SELECTOR: 'LinkedIn changed the markup of the element named above. The run stopped without retrying. See README → “When LinkedIn changes its markup”.',
-  NAV_TIMEOUT: 'The page was slow or did not render. This is a timeout — not a CAPTCHA. Check your connection and the tab, then start again.',
+  PAGE_CHANGED: 'The LinkedIn page did not look as expected, so the run stopped (no retry loop). Press “Copy diagnostics” and send the report so the selectors can be fixed (see also README → “When LinkedIn changes its markup”).',
+  MISSING_SELECTOR: 'LinkedIn changed the markup of the element named above, so the run stopped without retrying. Press “Copy diagnostics” and send the report so the selectors can be fixed. If it names the “Add a note” button, your account may have used its monthly personalised notes: clear the note and press “Send without note”.',
+  NAV_TIMEOUT: 'The page was slow, or it did not look like the expected LinkedIn page (the detail above says what was found). This is a timeout — not a CAPTCHA. Press “Copy diagnostics” and send the report: it includes the structure of the page that failed.',
   NO_TAB: 'Open linkedin.com, then press “Attach this tab” and Resume.',
-  CONTENT_UNAVAILABLE: 'The extension could not talk to the LinkedIn tab. Reload the tab (F5) and try again.',
+  CONTENT_UNAVAILABLE: 'The extension could not talk to the LinkedIn tab. Reload the tab (F5) and try again. If it keeps happening, press “Copy diagnostics”.',
   UNSUPPORTED_PAGE: 'LeadPilot only works on the LinkedIn pages it supports (people search, profiles, feed, Company Page admin).',
   IDENTITY_MISMATCH: 'LeadPilot could not confirm who this would be sent to / published as, so it did nothing. Check the tab and try again.',
   INTERRUPTED: 'Chrome restarted the extension mid-action. It was NOT retried. Check LinkedIn to see whether it went through, then start again.',
@@ -121,6 +121,7 @@ function render() {
   renderRun();
   renderApproval();
   renderTabInfo();
+  renderStartCard();
   renderLeadsPanelState();
   renderPostsHeader();
   if (!settingsFilled) fillSettings();
@@ -212,7 +213,7 @@ function renderBanner() {
     h('div', { class: 'meta', text: HINTS[err.code] || '' }),
     j.state === 'restricted'
       ? h('div', { class: 'btns' }, h('button', { class: 'btn btn-sm btn-stop', type: 'button', text: 'Clear restriction flag…', onclick: onClearRestriction }))
-      : null
+      : h('div', { class: 'btns' }, h('button', { class: 'btn btn-sm', type: 'button', text: 'Copy diagnostics', onclick: () => runDiag({ copy: true }) }))
   );
 }
 
@@ -221,6 +222,104 @@ async function onClearRestriction() {
     'Only clear this flag after you have checked LinkedIn directly and the restriction is resolved.\n\nContinuing to automate a restricted account can make things worse. Clear the flag?'
   );
   if (ok) await act('CLEAR_RESTRICTION', { confirm: true }, 'Restriction flag cleared.');
+}
+
+/* ───────────────────────────── getting started ───────────────────────────── */
+
+function renderStartCard() {
+  const card = $('#startCard');
+  const tab = S.tab;
+  const onSearch = !!tab && tab.pageType === 'search_people';
+  const hasLeads = S.leadCount > 0;
+  if (S.settings.accountMode === 'company' || (tab && hasLeads)) { card.hidden = true; return; }
+  card.hidden = false;
+  const shown = tab ? String(tab.pageType || 'other').replace(/_/g, ' ') : '';
+  const steps = [
+    [!!tab, 'Attach your LinkedIn tab', tab ? 'Attached.' : 'Open linkedin.com in this Chrome window, then press “Attach this tab” (opening this popup while on LinkedIn attaches it automatically).'],
+    [onSearch, 'Open a people search', onSearch ? 'You are on a people-search page.' : tab ? `The attached tab shows a “${shown}” page. Use Leads → “Open LinkedIn search”, or search for people yourself.` : 'Do step 1 first.'],
+    [hasLeads, 'Collect leads', hasLeads ? `${S.leadCount} lead(s) collected.` : 'On the search results page, open Leads → “Collect from this page”.'],
+    [false, 'Start a run', 'Choose an action under “Run” below and press Start. You review every message before it is sent.'],
+  ];
+  $('#startSteps').replaceChildren(...steps.map(([ok, title, text], i) =>
+    h('li', { class: ok ? 'done' : '' },
+      h('span', { class: 'mark', 'aria-hidden': 'true', text: ok ? '✓' : String(i + 1) }),
+      h('span', {}, h('strong', { text: title }), h('span', { class: 'sr', text: ok ? ' (done)' : ' (to do)' }), ' — ', text))));
+}
+
+/* ───────────────────────────── diagnostics ───────────────────────────── */
+
+let diagText = '';
+let impText = '';
+const TAB_MODE = new URLSearchParams(location.search).get('tab') === '1';
+if (TAB_MODE) document.documentElement.classList.add('tabmode');
+
+function showImportResult(r) {
+  const box = $('#impResult');
+  box.hidden = false;
+  box.classList.toggle('bad', !r.ok);
+  if (!r.ok) { box.textContent = r.message || 'Import failed.'; return; }
+  const bits = [
+    `${r.rows} row(s) read`,
+    `${r.matched} matched your leads${r.matchedByName ? ` (${r.matchedByName} by name + company)` : ''}`,
+    `${r.emailsAdded} email(s) added`,
+    `${r.noEmail} without a shared email`,
+    r.alreadyHadEmail ? `${r.alreadyHadEmail} already had it` : null,
+    r.emailConflicts ? `${r.emailConflicts} kept their existing email` : null,
+    r.invalidEmail ? `${r.invalidEmail} invalid` : null,
+    r.nowConnected ? `${r.nowConnected} marked Connected` : null,
+    r.added ? `${r.added} new lead(s) added` : null,
+    r.notInList ? `${r.notInList} not in your list` : null,
+    r.skipped ? `${r.skipped} row(s) without a profile URL skipped` : null,
+  ].filter(Boolean);
+  box.textContent = `${bits.join(' · ')}.`;
+}
+
+async function runImport(text) {
+  if (!String(text).trim()) { toast('Choose Connections.csv (or paste its content) first.', true); return; }
+  const btn = $('#impBtn');
+  btn.disabled = true;
+  const r = await api('IMPORT_CONNECTIONS', { csv: text, addNew: $('#impAddNew').checked });
+  btn.disabled = false;
+  showImportResult(r);
+  toast(r.ok ? `Import finished: ${r.emailsAdded} email(s) added.` : (r.message || 'Import failed.'), !r.ok);
+  if (r.ok) { impText = ''; $('#impPaste').value = ''; $('#impFile').value = ''; $('#impFileInfo').textContent = ''; await loadLeads(); scheduleRefresh(0); }
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    // Fallback: copy from the (visible) report box.
+    selectTab('settings');
+    $('#diagCard').open = true;
+    const ta = $('#diagOut');
+    ta.focus();
+    ta.select();
+    try { return document.execCommand('copy'); } catch (_e) { return false; }
+  }
+}
+
+async function runDiag({ copy } = {}) {
+  const r = await api('RUN_DIAGNOSTICS');
+  if (!r.ok) { toast(r.message || 'Could not run diagnostics.', true); return false; }
+  diagText = JSON.stringify(r.report, null, 2);
+  $('#diagOut').value = diagText;
+  $('#diagCopy').disabled = false;
+  if (!copy) { toast('Report ready — press “Copy report”.'); return true; }
+  if (await copyText(diagText)) toast('Diagnostics copied — paste it into the chat.');
+  else toast('Open Settings → Diagnostics, select the report text and copy it (Ctrl+C).', true);
+  return true;
+}
+
+async function loadLastDiag() {
+  if ($('#diagOut').value) return;
+  const r = await api('GET_DIAG');
+  if (r.ok && r.diag && r.diag.report) {
+    diagText = JSON.stringify(r.diag.report, null, 2);
+    $('#diagOut').value = diagText;
+    $('#diagCopy').disabled = false;
+  }
 }
 
 /* ───────────────────────────── stats ───────────────────────────── */
@@ -423,7 +522,7 @@ async function loadLeads() {
 
 function leadFilterFn(l) {
   const q = $('#leadFilter').value.trim().toLowerCase();
-  if (q && ![fullName(l), l.company, l.jobTitle, l.location, l.industry, l.notes].join(' ').toLowerCase().includes(q)) return false;
+  if (q && ![fullName(l), l.email, l.company, l.jobTitle, l.location, l.industry, l.notes].join(' ').toLowerCase().includes(q)) return false;
   const st = $('#leadStatus').value;
   const now = Date.now();
   switch (st) {
@@ -435,6 +534,8 @@ function leadFilterFn(l) {
     case 'dnc': return l.messageStatus === 'Do Not Contact';
     case 'converted': return l.messageStatus === 'Converted';
     case 'paused': return !!l.paused;
+    case 'has_email': return !!l.email;
+    case 'no_email': return !l.email;
     default: return true;
   }
 }
@@ -467,7 +568,8 @@ function renderLeads() {
     const li = h('li', {},
       h('label', { class: 'lead-main' }, cb, h('span', {},
         h('span', { class: 'lead-name', text: fullName(l) }),
-        h('span', { class: 'lead-sub', text: [l.jobTitle, l.company].filter(Boolean).join(' · ') || l.profileUrl })
+        h('span', { class: 'lead-sub', text: [l.jobTitle, l.company].filter(Boolean).join(' · ') || l.profileUrl }),
+        l.email ? h('span', { class: 'lead-sub', text: `✉ ${l.email}` }) : null
       )),
       h('div', { class: 'chips' },
         chipFor(l.connectionStatus, l.connectionStatus === 'Connected' ? 'ok' : l.connectionStatus === 'Pending' ? 'warn' : ''),
@@ -502,6 +604,7 @@ function leadEditor(l) {
   const box = h('div', { class: 'lead-edit' },
     h('div', { class: 'grid2' },
       f('First name', 'first', l.firstName), f('Last name', 'last', l.lastName),
+      h('label', { class: 'span2' }, 'Email', h('input', { type: 'text', id: 'le_email', value: l.email || '', placeholder: 'name@company.com', autocomplete: 'off' })),
       f('Job title', 'title', l.jobTitle), f('Company', 'company', l.company),
       f('Location', 'loc', l.location), f('Industry', 'ind', l.industry),
       sel('Connection status', 'conn', ['Not Connected', 'Pending', 'Connected', 'Unknown'], l.connectionStatus),
@@ -513,8 +616,9 @@ function leadEditor(l) {
     h('div', { class: 'btns' },
       h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: 'Save', onclick: async () => {
         const g = (id) => $(`#le_${id}`).value;
-        const r = await api('PATCH_LEAD', { id: l.id, patch: { firstName: g('first'), lastName: g('last'), jobTitle: g('title'), company: g('company'), location: g('loc'), industry: g('ind'), connectionStatus: g('conn'), messageStatus: g('msg'), nextFollowUp: g('next') ? new Date(g('next')).toISOString() : '', paused: $('#le_paused').checked, notes: g('notes') } });
+        const r = await api('PATCH_LEAD', { id: l.id, patch: { firstName: g('first'), lastName: g('last'), email: g('email'), jobTitle: g('title'), company: g('company'), location: g('loc'), industry: g('ind'), connectionStatus: g('conn'), messageStatus: g('msg'), nextFollowUp: g('next') ? new Date(g('next')).toISOString() : '', paused: $('#le_paused').checked, notes: g('notes') } });
         toast(r.ok ? 'Lead saved.' : r.message, !r.ok);
+        if (!r.ok) return; // keep the editor open so the invalid value can be fixed
         expandedLead = null;
         await loadLeads();
         scheduleRefresh(0);
@@ -834,6 +938,7 @@ function selectTab(name) {
   try { localStorage.setItem('lp_tab', name); } catch (_) { /* optional */ }
   if (name === 'leads') loadLeads();
   if (name === 'posts') { loadPosts(); updatePostPreview(); }
+  if (name === 'settings') loadLastDiag();
 }
 
 function applyTheme(mode) {
@@ -888,23 +993,30 @@ function wire() {
     btn.disabled = true;
     const r = await api('COLLECT_LEADS');
     btn.disabled = false;
-    if (r.ok) toast(r.note || `${r.found} visible · ${r.added} new · ${r.updated} updated · ${r.duplicates} already known${r.skipped ? ` · ${r.skipped} unreadable` : ''}`);
-    else toast(r.message || 'Could not collect leads.', true);
+    const msg = r.ok ? (r.note || `${r.found} visible · ${r.added} new · ${r.updated} updated · ${r.duplicates} already known${r.skipped ? ` · ${r.skipped} unreadable` : ''}`) : (r.message || 'Could not collect leads.');
+    toast(msg, !r.ok);
+    const box = $('#collectResult');
+    box.hidden = false;
+    box.classList.toggle('bad', !r.ok);
+    box.textContent = `${clockFmt(Date.now())} · ${msg}`; // stays on screen (a toast disappears after a few seconds)
     await loadLeads();
     scheduleRefresh(0);
   });
-  $('#openSearchBtn').addEventListener('click', async () => { const r = await act('OPEN_SEARCH', {}, 'Search opened in the attached tab.'); if (r.ok) window.close(); });
+  $('#openSearchBtn').addEventListener('click', async () => { const r = await act('OPEN_SEARCH', {}, 'Search opened in the attached tab.'); if (r.ok && !TAB_MODE) window.close(); });
   $('#leadFilter').addEventListener('input', () => { leadLimit = 40; renderLeads(); });
   $('#leadStatus').addEventListener('change', () => { leadLimit = 40; renderLeads(); });
   $('#selAllBtn').addEventListener('click', () => { leads.filter(leadFilterFn).forEach((l) => selected.add(l.id)); saveSelection(); renderLeads(); renderRun(); });
   $('#selNoneBtn').addEventListener('click', () => { selected.clear(); saveSelection(); renderLeads(); renderRun(); });
   $('#leadMore').addEventListener('click', () => { leadLimit += 40; renderLeads(); });
   $('#nlAdd').addEventListener('click', async () => {
-    const r = await api('ADD_LEAD', { lead: { profileUrl: $('#nlUrl').value, firstName: $('#nlFirst').value, lastName: $('#nlLast').value, jobTitle: $('#nlTitle').value, company: $('#nlCompany').value } });
+    const r = await api('ADD_LEAD', { lead: { profileUrl: $('#nlUrl').value, firstName: $('#nlFirst').value, lastName: $('#nlLast').value, jobTitle: $('#nlTitle').value, company: $('#nlCompany').value, email: $('#nlEmail').value } });
     toast(r.ok ? (r.added ? 'Lead added.' : 'That profile was already in your list.') : r.message, !r.ok);
-    if (r.ok) { ['#nlUrl', '#nlFirst', '#nlLast', '#nlTitle', '#nlCompany'].forEach((s) => { $(s).value = ''; }); await loadLeads(); scheduleRefresh(0); }
+    if (r.ok) { ['#nlUrl', '#nlFirst', '#nlLast', '#nlTitle', '#nlCompany', '#nlEmail'].forEach((s) => { $(s).value = ''; }); await loadLeads(); scheduleRefresh(0); }
   });
   $('#exportBtn').addEventListener('click', onExport);
+  $('#diagRun').addEventListener('click', () => runDiag());
+  $('#diagCopy').addEventListener('click', async () => { toast((await copyText(diagText)) ? 'Report copied.' : 'Select the report text and press Ctrl+C.', false); });
+  $('#startDiag').addEventListener('click', () => runDiag({ copy: true }));
 
   // posts
   $('#postText').addEventListener('input', updatePostPreview);
@@ -950,6 +1062,23 @@ function wire() {
     settingsFilled = false;
     scheduleRefresh(0);
   });
+
+  // open in a browser tab (a file picker closes the small popup on some systems)
+  $('#tabBtn').hidden = TAB_MODE;
+  $('#tabBtn').addEventListener('click', async () => {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html?tab=1') });
+    window.close();
+  });
+
+  // import LinkedIn's Connections.csv
+  $('#impFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 25e6) { toast('That file is larger than 25 MB — is it really Connections.csv?', true); e.target.value = ''; return; }
+    impText = await f.text();
+    $('#impFileInfo').textContent = `Loaded ${f.name} (${Math.max(1, Math.round(f.size / 1024))} KB). Press Import.`;
+  });
+  $('#impBtn').addEventListener('click', () => runImport(impText || $('#impPaste').value));
 
   // live updates from the service worker
   chrome.storage.onChanged.addListener((changes, area) => {
