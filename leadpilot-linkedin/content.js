@@ -31,7 +31,7 @@
   // A copy orphaned by an extension reload (its chrome.runtime is gone) must not block a fresh one.
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
   if (window.__leadPilotContent && window.__leadPilotContent.alive && window.__leadPilotContent.alive()) return;
-  const CS_VERSION = '1.0.1';
+  const CS_VERSION = '1.0.2';
   window.__leadPilotContent = { version: CS_VERSION, alive }; // finder functions are attached at the bottom for DevTools debugging
 
   /* ───────────────────────────── generic helpers ───────────────────────────── */
@@ -130,6 +130,25 @@
       let slug;
       try { slug = decodeURIComponent(m[1]); } catch (_) { slug = m[1]; }
       slug = slug.trim().toLowerCase();
+      return slug ? `https://www.linkedin.com/in/${encodeURIComponent(slug)}/` : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Like normalizeProfileUrl, but keeps the slug's ORIGINAL case. Vanity names are case-insensitive, but opaque ids
+   * (ACoAA…) are case-sensitive, so the URL we navigate to must not be lower-cased.
+   */
+  function canonicalProfileUrl(raw) {
+    try {
+      const u = new URL(String(raw || '').trim(), 'https://www.linkedin.com');
+      if (!/(^|\.)linkedin\.com$/i.test(u.hostname)) return null;
+      const m = u.pathname.match(/^\/in\/([^/?#]+)/i);
+      if (!m) return null;
+      let slug;
+      try { slug = decodeURIComponent(m[1]); } catch (_) { slug = m[1]; }
+      slug = slug.trim();
       return slug ? `https://www.linkedin.com/in/${encodeURIComponent(slug)}/` : null;
     } catch (_) {
       return null;
@@ -382,11 +401,21 @@
     /^premium$/i,
   ];
 
+  // The connection-degree badge ("· 2nd") is often an inline <span> right next to the name, so innerText glues them
+  // into one line ("Jane Doe· 2nd"). Strip the badge before comparing a line with the name.
+  const stripDegree = (l) =>
+    l
+      .replace(/\s*[·•]\s*(1st|2nd|3rd\+?)(\s+degree connection)?\s*$/i, '')
+      .replace(/^\s*[·•]\s*(1st|2nd|3rd\+?)(\s+degree connection)?\s*/i, '')
+      .trim();
+
   function cardLines(card, name) {
     const nn = norm(name);
     return linesOf(card).filter((l) => {
       if (NOISE_LINES.some((re) => re.test(l))) return false;
-      if (nn && norm(l) === nn) return false;
+      const base = stripDegree(l);
+      if (!base) return false;
+      if (nn && norm(base) === nn) return false;
       if (nn && norm(l).startsWith(nn) && /profile|status/.test(norm(l))) return false;
       return true;
     });
@@ -515,19 +544,20 @@
     return pick([
       // SELECTOR: a[href*="/in/"]  (first anchor in the card)
       // ASSUMPTION: the first profile link in a card is the person themselves; later ones are mutual connections.
-      () => profileAnchors(card).map((a) => normalizeProfileUrl(a.href)).find(Boolean),
+      () => profileAnchors(card).map((a) => canonicalProfileUrl(a.href)).find(Boolean),
       // SELECTOR: [data-chameleon-result-urn] ancestor/descendant link
       // ASSUMPTION: if the card root has the data attribute, a link to the profile is nested inside it.
       () => {
         const root = card.matches('[data-chameleon-result-urn]') ? card : qs(card, '[data-chameleon-result-urn]');
-        return root ? profileAnchors(root).map((a) => normalizeProfileUrl(a.href)).find(Boolean) : null;
+        return root ? profileAnchors(root).map((a) => canonicalProfileUrl(a.href)).find(Boolean) : null;
       },
     ]);
   }
 
   /** NAME EXTRACTION (search card). Returns '' when the name is hidden (e.g. "LinkedIn Member"). */
   function extractName(card, profileUrl) {
-    const anchors = profileAnchors(card).filter((a) => normalizeProfileUrl(a.href) === profileUrl);
+    const wanted = normalizeProfileUrl(profileUrl);
+    const anchors = profileAnchors(card).filter((a) => normalizeProfileUrl(a.href) === wanted);
     const strategies = [
       // SELECTOR: a[href*="/in/"] span[aria-hidden="true"]
       // ASSUMPTION: the visible name is an aria-hidden span next to a visually-hidden duplicate for screen readers.
@@ -679,15 +709,45 @@
 
   /* ───────────────────────────── profile page ───────────────────────────── */
 
+  /** Name from the tab title: "Jane Doe | LinkedIn", "(3) Jane Doe | LinkedIn", "Jane Doe - Founder at Acme | LinkedIn". */
+  function nameFromTitle() {
+    const t = clean(document.title.replace(/^\(\d+\)\s*/, '').replace(/\s*[|·]\s*LinkedIn.*$/i, ''));
+    return cleanName(t.split(/\s+[-–—]\s+/)[0]);
+  }
+
+  let nameElMemo = { at: 0, el: null };
+
+  /** The element that shows the member's name on a profile page (usually the <h1>). */
   function profileH1() {
-    return pick([
+    if (nameElMemo.el && nameElMemo.el.isConnected && Date.now() - nameElMemo.at < 1000) return nameElMemo.el;
+    const el = pick([
       // SELECTOR: main h1
       // ASSUMPTION: the member's name is the page's <h1> inside <main>.
       () => { const e = qs(document, 'main h1'); return e && isVisible(e) ? e : null; },
       // SELECTOR: h1
       // ASSUMPTION: fallback — the first visible <h1> on the page.
       () => qsa(document, 'h1').find(isVisible),
+      // SELECTOR: [role="heading"][aria-level="1"]
+      // ASSUMPTION: if LinkedIn stops using <h1>, the page title is still exposed as a level-1 heading role.
+      () => qsa(document, '[role="heading"][aria-level="1"]').find(isVisible),
+      // SELECTOR: first visible element in <main> (h1-h4, heading role, p, span, div) whose whole text equals the name in the tab title
+      // ASSUMPTION: the top card shows the member's name as plain text that matches document.title, whatever tag wraps it.
+      () => {
+        const want = norm(nameFromTitle());
+        if (!want) return null;
+        const lo = want.length;
+        const hi = want.length + 30;
+        return qsa(qs(document, 'main') || document.body, 'h1, h2, h3, h4, [role="heading"], p, span, div').find((e) => {
+          if (e.children.length > 3) return false;
+          const n = (e.textContent || '').length;
+          if (n < lo || n > hi) return false;
+          const t = norm(e.textContent);
+          return (t === want || t.startsWith(`${want} `)) && isVisible(e);
+        });
+      },
     ]);
+    nameElMemo = { at: Date.now(), el };
+    return el;
   }
 
   /** NAME EXTRACTION (profile page). */
@@ -706,19 +766,42 @@
     return cleanName(raw);
   }
 
+  /** Smallest ancestor of `el` (within 8 levels) that contains profile action buttons. */
+  function climbToActions(el) {
+    let n = el;
+    for (let i = 0; n && i < 8; i++, n = n.parentElement) {
+      if (collectProfileActions(n).length) return n;
+    }
+    return null;
+  }
+
   function profileTopCard() {
     const h1 = profileH1();
-    return pick([
+    const candidates = [
       // SELECTOR: h1.closest("section")
       // ASSUMPTION: the name, headline, location and action buttons share one <section> (the top card).
       () => h1 && h1.closest('section'),
       // SELECTOR: section.pv-top-card, [class*="top-card"]
       // ASSUMPTION: older / alternate class names for the top card.
       () => qs(document, 'section.pv-top-card, [class*="pv-top-card"]'),
+      // SELECTOR: the smallest ancestor of the name element that contains Connect / Message / Follow / More buttons
+      // ASSUMPTION: if the top card is not a <section>, it is still the closest container holding both the name and the buttons.
+      () => climbToActions(h1),
       // SELECTOR: main section:first-of-type
       // ASSUMPTION: the top card is the first section in <main>.
       () => qs(document, 'main section'),
-    ]);
+    ];
+    // Prefer the first candidate that really contains action buttons; otherwise the first one that exists at all.
+    let first = null;
+    for (const fn of candidates) {
+      try {
+        const el = fn();
+        if (!el) continue;
+        if (!first) first = el;
+        if (collectProfileActions(el).length) return el;
+      } catch (_) { /* next candidate */ }
+    }
+    return first;
   }
 
   function extractProfileHeadline(top, name) {
@@ -808,6 +891,17 @@
     return null;
   }
 
+  /**
+   * A button must belong to THIS profile: its aria-label names the person ("Invite Jane Doe to connect",
+   * "Message Jane"). This keeps a wide top-card container from ever picking another member's Connect button.
+   */
+  function actionMatchesProfile(a, me) {
+    const label = clean(a.el.getAttribute('aria-label') || '');
+    const pats = { connect: /^invite (.+?) to connect/i, message: /^message (.+)$/i, follow: /^follow (.+)$/i, pending: /invitation sent to (.+)$/i };
+    const who = pats[a.kind] ? (label.match(pats[a.kind]) || [])[1] : '';
+    return !who || nameTokens(who).first === nameTokens(me).first;
+  }
+
   /** CONNECTION / MESSAGE BUTTON DETECTION — returns [{ kind, el }] for the profile header. */
   function collectProfileActions(top) {
     // SELECTOR: main (fallback scope when the top card was not found)
@@ -826,7 +920,8 @@
     }
     // Prefer real <button>s over links when both exist for the same kind.
     out.sort((a, b) => (a.el.tagName === 'BUTTON' ? 0 : 1) - (b.el.tagName === 'BUTTON' ? 0 : 1));
-    return out;
+    const me = extractProfileName();
+    return me ? out.filter((a) => actionMatchesProfile(a, me)) : out;
   }
 
   /** CONNECTION BUTTON DETECTION (public entry used by prepare/execute). */
@@ -851,14 +946,31 @@
     return acts.length ? 'unavailable' : 'unknown';
   }
 
+  const UNAVAILABLE_RE = /(this page (doesn.?t|does not) exist|page not found|profile (is )?(not available|unavailable|not found)|this profile is not available)/i;
+
+  /** Name-free description of the page we landed on, for error messages. */
+  function pageFacts() {
+    // SELECTOR: main, h1, h2 (counted only, for the error message)
+    // ASSUMPTION: a rendered LinkedIn page has a <main> and uses h1/h2 headings; the counts show what is really on the page.
+    const main = qs(document, 'main');
+    return `Landed on ${redactPath(location.pathname)} (${pageType().replace(/_/g, ' ')} page); main: ${main ? 'yes' : 'no'}; h1: ${qsa(document, 'h1').length}; h2: ${qsa(document, 'h2').length}; text length: ${textOf(main || document.body).length}.`;
+  }
+
   async function waitForProfile() {
-    const h1 = await waitFor(profileH1, 15000);
-    if (h1) {
-      if (/doesn.t exist|not available|page not found|profile unavailable/i.test(textOf(h1))) return { unavailable: true };
-      return { h1 };
+    const found = await waitFor(() => {
+      const h1 = profileH1();
+      if (h1) return { h1 };
+      // SELECTOR: <main> text (first 1500 chars)
+      // ASSUMPTION: LinkedIn's "page doesn't exist" / "profile not available" message is shown inside <main>.
+      if (UNAVAILABLE_RE.test(textOf(qs(document, 'main') || document.body).slice(0, 1500))) return { unavailable: true };
+      return null;
+    }, 15000);
+    if (found) {
+      if (found.h1 && UNAVAILABLE_RE.test(textOf(found.h1))) return { unavailable: true };
+      return found;
     }
     await guardSafety();
-    throw new LPError('NAV_TIMEOUT', 'The profile did not finish rendering within 15 seconds (no CAPTCHA or warning was detected).', { selector: 'profile name (h1)' });
+    throw new LPError('NAV_TIMEOUT', `The profile did not show a recognisable name within 15 seconds (no CAPTCHA or warning was detected). ${pageFacts()}`, { selector: 'profile name' });
   }
 
   function verifyIdentity(expectedUrl, expectedName) {
@@ -866,7 +978,8 @@
     // SELECTOR: link[rel="canonical"]
     // ASSUMPTION: profile pages declare their canonical /in/<slug>/ URL, which may differ from a URN-style URL we visited.
     const canonical = normalizeProfileUrl((qs(document, 'link[rel="canonical"]') || {}).href);
-    if (expectedUrl && (here === expectedUrl || canonical === expectedUrl)) return;
+    const want = normalizeProfileUrl(expectedUrl);
+    if (want && (here === want || canonical === want)) return;
     const actual = extractProfileName();
     if (expectedName && actual && namesMatch(expectedName, actual)) return;
     throw new LPError('IDENTITY_MISMATCH', `The open profile ("${actual || 'unknown'}") does not match the lead ("${expectedName || expectedUrl}"). Nothing was done.`);
@@ -938,8 +1051,9 @@
     if (!menu) return null;
     // SELECTOR: [role="menuitem"], [role="button"], li, button, a, div[aria-label] inside the menu
     // ASSUMPTION: the Connect entry is an item whose text is "Connect" or whose aria-label is "Invite <name> to connect".
+    const me = extractProfileName();
     const item = qsa(menu, '[role="menuitem"], [role="button"], li, button, a, div[aria-label]').find(
-      (el) => isVisible(el) && (classifyAction(el) === 'connect' || /^connect$/i.test(textOf(el)))
+      (el) => isVisible(el) && (classifyAction(el) === 'connect' || /^connect$/i.test(textOf(el))) && (!me || actionMatchesProfile({ kind: 'connect', el }, me))
     );
     if (!item) {
       try { clickEl(more.el, 'More actions button'); } catch (_) { /* menu already closed */ }
@@ -1580,13 +1694,22 @@
       degree,
       connectionState: top ? profileConnectionState(top, degree) : null,
       classifiedActions: top ? collectProfileActions(top).map((a) => ({ kind: a.kind, ...describeEl(a.el) })) : [],
+      // SELECTOR: button, a, [role="button"] inside the top card (listed for the report, not acted on)
+      // ASSUMPTION: every clickable control in the profile header is one of these, so this shows what a selector could have matched.
       controlsInTopCard: top ? qsa(top, 'button, a, [role="button"]').filter(isVisible).slice(0, 25).map(describeEl) : [],
+      titleNameFound: !!nameFromTitle(),
+      // SELECTOR: main text (first 1500 chars)
+      // ASSUMPTION: LinkedIn's "page doesn't exist" message is shown inside <main>.
+      unavailableText: UNAVAILABLE_RE.test(textOf(qs(document, 'main') || document.body).slice(0, 1500)),
+      pageFacts: pageFacts(),
       topCardSkeleton: skeleton(top, 5, 90),
     };
   }
 
   async function diagnose() {
     const pt = pageType();
+    // SELECTOR: main
+    // ASSUMPTION: LinkedIn wraps page content in a single <main>.
     const main = qs(document, 'main');
     const finding = detectSecurityState();
     const report = {
@@ -1598,6 +1721,8 @@
         readyState: document.readyState,
         language: document.documentElement.lang || '',
         hasMain: !!main,
+        // SELECTOR: h1 (count) and #global-nav, nav.global-nav, header[role="banner"]  (reported only)
+        // ASSUMPTION: a signed-in LinkedIn page has a global navigation bar; a missing one or zero headings is worth knowing about.
         h1Count: qsa(document, 'h1').length,
         globalNav: !!qs(document, '#global-nav, nav.global-nav, header[role="banner"]'),
         viewport: `${window.innerWidth}x${window.innerHeight}`,

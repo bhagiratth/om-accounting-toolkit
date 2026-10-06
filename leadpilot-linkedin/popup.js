@@ -37,7 +37,7 @@ const HINTS = {
   ACCOUNT_RESTRICTED: 'LinkedIn says the account is restricted. All actions are locked. Resolve it directly with LinkedIn; only then use “Clear restriction flag”.',
   PAGE_CHANGED: 'The LinkedIn page did not look as expected, so the run stopped (no retry loop). Press “Copy diagnostics” and send the report so the selectors can be fixed (see also README → “When LinkedIn changes its markup”).',
   MISSING_SELECTOR: 'LinkedIn changed the markup of the element named above, so the run stopped without retrying. Press “Copy diagnostics” and send the report so the selectors can be fixed. If it names the “Add a note” button, your account may have used its monthly personalised notes: clear the note and press “Send without note”.',
-  NAV_TIMEOUT: 'The page was slow or did not render. This is a timeout — not a CAPTCHA. Check your connection and the tab, then start again.',
+  NAV_TIMEOUT: 'The page was slow, or it did not look like the expected LinkedIn page (the detail above says what was found). This is a timeout — not a CAPTCHA. Press “Copy diagnostics” and send the report: it includes the structure of the page that failed.',
   NO_TAB: 'Open linkedin.com, then press “Attach this tab” and Resume.',
   CONTENT_UNAVAILABLE: 'The extension could not talk to the LinkedIn tab. Reload the tab (F5) and try again. If it keeps happening, press “Copy diagnostics”.',
   UNSUPPORTED_PAGE: 'LeadPilot only works on the LinkedIn pages it supports (people search, profiles, feed, Company Page admin).',

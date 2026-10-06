@@ -21,7 +21,7 @@
 
 /* ───────────────────────────── constants ───────────────────────────── */
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 
 const K = {
   settings: 'lp_settings',
@@ -32,6 +32,7 @@ const K = {
   posts: 'lp_posts',
   tab: 'lp_tab',
   diag: 'lp_diag',
+  failure: 'lp_failure',
 };
 
 // Hard ceilings the settings UI cannot exceed. Deliberately conservative.
@@ -139,6 +140,25 @@ function normalizeProfileUrl(raw) {
     slug = slug.trim().toLowerCase();
     if (!slug) return null;
     return `https://www.linkedin.com/in/${encodeURIComponent(slug)}/`;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Like normalizeProfileUrl but keeps the slug's ORIGINAL case. The lead id stays lower-case (that is what makes
+ * duplicates collapse), but the URL we open must not be lower-cased: opaque ids (ACoAA…) are case-sensitive.
+ */
+function canonicalProfileUrl(raw) {
+  try {
+    const u = new URL(String(raw || '').trim(), 'https://www.linkedin.com');
+    if (!/(^|\.)linkedin\.com$/i.test(u.hostname)) return null;
+    const m = u.pathname.match(/^\/in\/([^/?#]+)/i);
+    if (!m) return null;
+    let slug;
+    try { slug = decodeURIComponent(m[1]); } catch (_) { slug = m[1]; }
+    slug = slug.trim();
+    return slug ? `https://www.linkedin.com/in/${encodeURIComponent(slug)}/` : null;
   } catch (_) {
     return null;
   }
@@ -426,7 +446,7 @@ function makeLead(raw, source) {
     id,
     firstName: titleCaseName(raw.firstName),
     lastName: titleCaseName(raw.lastName),
-    profileUrl: id,
+    profileUrl: canonicalProfileUrl(raw.profileUrl) || id,
     jobTitle: str(raw.jobTitle, 200),
     company: str(raw.company, 200),
     location: str(raw.location, 200),
@@ -458,12 +478,15 @@ async function upsertLeads(incoming, source) {
       if (!id) continue;
       const ex = leads[id];
       if (!ex) {
-        leads[id] = makeLead({ ...raw, profileUrl: id }, source);
+        leads[id] = makeLead(raw, source);
         added++;
         continue;
       }
       // Existing lead: only fill blanks / upgrade connection state; never overwrite the user's edits or statuses.
       let changed = false;
+      // Older versions stored the URL lower-cased; restore the original case (opaque ids are case-sensitive).
+      const canon = canonicalProfileUrl(raw.profileUrl);
+      if (canon && ex.profileUrl === id && canon !== id) { ex.profileUrl = canon; changed = true; }
       for (const f of ['firstName', 'lastName', 'jobTitle', 'company', 'location', 'industry']) {
         if (!ex[f] && raw[f]) { ex[f] = f.endsWith('Name') ? titleCaseName(raw[f]) : str(raw[f], 200); changed = true; }
       }
@@ -748,6 +771,22 @@ async function cancelAdvance() {
   try { await chrome.alarms.clear(ALARM_ADVANCE); } catch (_) { /* ignore */ }
 }
 
+// Failures that are about what the page looked like: keep a structure snapshot of the failing page for the diagnostics report.
+const SNAPSHOT_CODES = new Set(['NAV_TIMEOUT', 'MISSING_SELECTOR', 'PAGE_CHANGED', 'IDENTITY_MISMATCH', 'UNSUPPORTED_PAGE']);
+
+async function captureFailureSnapshot(code) {
+  try {
+    const tab = await getBoundTab();
+    if (!tab) return;
+    const res = await rawSend(tab.id, { type: 'DIAGNOSE' }, 8000); // read-only; text is already reduced to lengths
+    if (res && res.ok) {
+      let path = '';
+      try { path = redactPath(new URL(tab.url).pathname); } catch (_) { /* ignore */ }
+      await store.set(K.failure, { ts: Date.now(), code, path, report: res.report });
+    }
+  } catch (_) { /* a snapshot is a convenience, never a reason to fail */ }
+}
+
 /**
  * Stop gracefully with a classified error. paused → user can Resume after fixing the cause;
  * error → job ends (no retry loop); restricted → everything locks until the user clears the flag.
@@ -764,6 +803,7 @@ async function failJob(rawCode, ctx = {}) {
     selector: ctx.selector || '',
     ts: Date.now(),
   };
+  if (SNAPSHOT_CODES.has(code)) await captureFailureSnapshot(code);
   await cancelAdvance();
   const job = await mutateJob((j) => {
     j.state = meta.state;
@@ -1487,7 +1527,7 @@ async function patchLead(id, patch) {
 async function addManualLead(raw) {
   const id = normalizeProfileUrl(raw.profileUrl);
   if (!id) return { ok: false, code: 'VALIDATION', message: 'Enter a LinkedIn profile URL like https://www.linkedin.com/in/jane-doe/' };
-  const counts = await upsertLeads([{ ...raw, profileUrl: id }], 'manual');
+  const counts = await upsertLeads([{ ...raw }], 'manual');
   return { ok: true, ...counts };
 }
 
@@ -1602,6 +1642,12 @@ async function runDiagnostics(hintTab) {
     }
   }
 
+  const failure = await store.get(K.failure, () => null);
+  const urlShape = (l) => {
+    const slug = ((l.profileUrl || '').match(/\/in\/([^/]+)/) || [])[1] || '';
+    return { kind: /^AC[oOwW][A-Za-z0-9_-]{10,}$/.test(slug) ? 'opaque-id' : 'vanity', length: slug.length, hasUppercase: /[A-Z]/.test(slug), hasDigit: /\d/.test(slug) };
+  };
+
   const manifest = chrome.runtime.getManifest();
   const report = {
     generatedAt: iso(),
@@ -1624,9 +1670,12 @@ async function runDiagnostics(hintTab) {
       counters,
     },
     data: { leads: Object.keys(leads).length, posts: posts.length, logEntries: logAll.length },
+    leadUrls: Object.values(leads).slice(0, 5).map(urlShape),
     attachedTab,
     contentScript,
     page,
+    // Structure of the page where the last page-related failure happened (captured at that moment, even if the tab has moved on).
+    lastFailure: failure ? { ago: agoText(failure.ts), code: failure.code, path: failure.path, report: failure.report } : null,
     recentLog: recent.map((e) => ({
       ago: agoText(e.ts),
       level: e.level,

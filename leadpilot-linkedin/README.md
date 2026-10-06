@@ -98,8 +98,9 @@ selected Page, nothing is posted.
 2. On a people-search results page press **Collect from this page**. LeadPilot reads only the result cards that are
    **visible** there (name, headline → job title/company, location, connection degree, profile URL). It does not scroll,
    page through results, or open profiles to collect.
-3. Leads are de-duplicated by **normalised profile URL** (`https://www.linkedin.com/in/<slug>/`, lower-case, no query
-   string). "LinkedIn Member" (hidden-name) cards are skipped.
+3. Leads are de-duplicated by **normalised profile URL** (`https://www.linkedin.com/in/<slug>/`, lower-cased for comparison,
+   no query string). The profile URL that is opened (and exported) keeps the slug's **original case**, because LinkedIn's opaque
+   ids (`ACoAA…`) are case-sensitive. "LinkedIn Member" (hidden-name) cards are skipped.
 4. Review them in the **Leads** tab: filter, tick the ones you want, edit any field, add notes, mark
    *Replied / Do Not Contact / Converted*, or **Pause** a lead.
 5. Industry is not visible on result cards; it is pre-filled from your *Target industry* setting and is editable.
@@ -267,7 +268,7 @@ All of these are in **`content.js`**:
 | What broke | Function(s) to update |
 |---|---|
 | **Profile / card discovery** (no cards found on a search page; profile top card not found) | `findResultCards()` and the strategy list `resultCardLayers()` (helpers `resolveCards`, `cardsBySiblingBlocks`, `cardsFromAnchors`), `profileTopCard()`, `profileH1()` |
-| **Name extraction** | `extractName(card, profileUrl)` for search cards, `extractProfileName()` for profile pages, `cleanName()` |
+| **Name extraction** | `extractName(card, profileUrl)` for search cards, `extractProfileName()` for profile pages (the name element is found by `profileH1()`: `<h1>`, then heading roles, then the element whose text equals the name in the tab title), `cleanName()` |
 | **Company extraction** | `extractCompany(card, name)` for search cards, `extractProfileCompany(top, headline)` for profile pages, `splitHeadline()` |
 | **Job-title extraction** | `extractJobTitle(card, name)` (via `cardHeadline()`), `extractProfileHeadline()` / `extractProfileJobTitle()`, `splitHeadline()` |
 | **Profile URL extraction** | `extractProfileUrl(card)`; URL normalisation lives in `normalizeProfileUrl()` (content.js) **and** the identical copy in `background.js` — change both |
@@ -296,7 +297,7 @@ Settings → **Diagnostics** (or the **Copy diagnostics** button in a red / yell
 1. Open the LinkedIn page where it fails (for example a people-search results page) in the attached tab.
 2. Press **Run diagnostics**, then **Copy report**, and paste the report to whoever maintains the extension.
 
-The report contains the extension version and state, the browser version, what the content script found on the page (how many result cards each discovery strategy sees, which buttons were recognised on a profile, whether a warning was detected) and the last 20 log lines. It deliberately describes only the **structure** of the page: every text, label, alt text and link is replaced by a length or a placeholder, lead names in the log are replaced by `[lead]`, and message bodies are cut. Only generic UI words such as "Connect", "Message" or "2nd" stay readable. The last report is also kept in `chrome.storage.local` (`lp_diag`).
+The report contains the extension version and state, the browser version, what the content script found on the page (how many result cards each discovery strategy sees, which buttons were recognised on a profile, whether a warning was detected) and the last 20 log lines. It deliberately describes only the **structure** of the page: every text, label, alt text and link is replaced by a length or a placeholder, lead names in the log are replaced by `[lead]`, and message bodies are cut. Only generic UI words such as "Connect", "Message" or "2nd" stay readable. When a run stops because of what a page looked like (*Navigation timeout*, *Missing selector*, *LinkedIn page changed*, *Recipient could not be verified*), a snapshot of that page's structure is saved at that moment and included in the next report as `lastFailure` — so it is still there even if you have moved the tab elsewhere before copying the report. The last report is kept in `chrome.storage.local` (`lp_diag`, snapshot in `lp_failure`).
 
 Developers can run the same checks from DevTools: choose the **"LeadPilot LinkedIn"** execution context and call `__leadPilotContent.diagnose()`.
 
