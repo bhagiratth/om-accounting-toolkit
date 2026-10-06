@@ -21,7 +21,7 @@
 
 /* ───────────────────────────── constants ───────────────────────────── */
 
-const VERSION = '1.0.2';
+const VERSION = '1.1.0';
 
 const K = {
   settings: 'lp_settings',
@@ -60,6 +60,7 @@ const BLOCKING_MESSAGE_STATUSES = ['Replied', 'Do Not Contact', 'Converted'];
 const CSV_FIELDS = [
   { key: 'firstName', label: 'First Name' },
   { key: 'lastName', label: 'Last Name' },
+  { key: 'email', label: 'Email' },
   { key: 'profileUrl', label: 'Profile URL' },
   { key: 'jobTitle', label: 'Job Title' },
   { key: 'company', label: 'Company' },
@@ -267,6 +268,7 @@ function defaultSettings() {
       { day: 10, label: 'Final follow-up', templateId: 'tpl-followup-3' },
     ],
     exportFields: CSV_FIELDS.map((f) => f.key),
+    exportFieldsVersion: 2,
   };
 }
 
@@ -281,9 +283,18 @@ function mergeSettings(base, over) {
   return out;
 }
 
-async function getSettings() {
+async function readSettings() {
   const stored = await store.get(K.settings, () => ({}));
-  return sanitizeSettings(mergeSettings(defaultSettings(), stored));
+  const merged = mergeSettings(defaultSettings(), stored);
+  // Settings saved before the Email field existed: include it in the export selection by default.
+  if (stored && Array.isArray(stored.exportFields) && stored.exportFieldsVersion === undefined && !merged.exportFields.includes('email')) {
+    merged.exportFields = [...merged.exportFields, 'email'];
+  }
+  return merged;
+}
+
+async function getSettings() {
+  return sanitizeSettings(await readSettings());
 }
 
 /** Clamp / validate every setting. Anything out of range is pulled back to a safe value. */
@@ -439,6 +450,13 @@ function titleCaseName(s) {
   return s;
 }
 
+// Deliberately strict: must start with a letter/digit, so spreadsheet-formula text (=, +, -, @ first) can never be stored as an email.
+const EMAIL_RE = /^[A-Za-z0-9][A-Za-z0-9._%+'-]{0,63}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\.[A-Za-z]{2,24}$/;
+function cleanEmail(v) {
+  const e = String(v == null ? '' : v).trim().toLowerCase();
+  return e.length <= 254 && EMAIL_RE.test(e) ? e : '';
+}
+
 function makeLead(raw, source) {
   const id = normalizeProfileUrl(raw.profileUrl);
   const t = iso();
@@ -446,6 +464,7 @@ function makeLead(raw, source) {
     id,
     firstName: titleCaseName(raw.firstName),
     lastName: titleCaseName(raw.lastName),
+    email: cleanEmail(raw.email),
     profileUrl: canonicalProfileUrl(raw.profileUrl) || id,
     jobTitle: str(raw.jobTitle, 200),
     company: str(raw.company, 200),
@@ -490,6 +509,7 @@ async function upsertLeads(incoming, source) {
       for (const f of ['firstName', 'lastName', 'jobTitle', 'company', 'location', 'industry']) {
         if (!ex[f] && raw[f]) { ex[f] = f.endsWith('Name') ? titleCaseName(raw[f]) : str(raw[f], 200); changed = true; }
       }
+      if (!ex.email && raw.email && cleanEmail(raw.email)) { ex.email = cleanEmail(raw.email); changed = true; }
       const up = upgradeConnection(ex.connectionStatus, raw.connectionStatus);
       if (up !== ex.connectionStatus) { ex.connectionStatus = up; changed = true; }
       if (changed) { ex.updatedAt = iso(); updated++; }
@@ -642,7 +662,7 @@ function toCsv(rows, fields, neutralize) {
   };
   const lines = [fields.map((f) => esc(f.label)).join(',')];
   for (const r of rows) lines.push(fields.map((f) => esc(r[f.key])).join(','));
-  return `﻿${lines.join('\r\n')}\r\n`;
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
 /* ───────────────────────────── tab handling ───────────────────────────── */
@@ -1496,8 +1516,7 @@ async function collectEngagement(hintTab) {
 
 async function saveSettings(patch) {
   return withLock(async () => {
-    const stored = await store.get(K.settings, () => ({}));
-    const cur = mergeSettings(defaultSettings(), stored);
+    const cur = await readSettings();
     const next = mergeSettings(cur, patch || {});
     sanitizeSettings(next);
     await store.set(K.settings, next);
@@ -1508,9 +1527,13 @@ async function saveSettings(patch) {
 const LEAD_EDITABLE = ['firstName', 'lastName', 'jobTitle', 'company', 'location', 'industry', 'source', 'notes'];
 
 async function patchLead(id, patch) {
+  if ('email' in patch && String(patch.email || '').trim() && !cleanEmail(patch.email)) {
+    return { ok: false, code: 'VALIDATION', message: 'That does not look like a valid email address (for example name@company.com).' };
+  }
   let found = false;
   await updateLead(id, (l) => {
     found = true;
+    if ('email' in patch) l.email = cleanEmail(patch.email);
     for (const f of LEAD_EDITABLE) if (f in patch) l[f] = f === 'notes' ? str(patch[f], 2000) : str(patch[f], 200);
     if ('connectionStatus' in patch && CONNECTION_STATUSES.includes(patch.connectionStatus)) l.connectionStatus = patch.connectionStatus;
     if ('messageStatus' in patch && MESSAGE_STATUSES.includes(patch.messageStatus)) l.messageStatus = patch.messageStatus;
@@ -1527,6 +1550,7 @@ async function patchLead(id, patch) {
 async function addManualLead(raw) {
   const id = normalizeProfileUrl(raw.profileUrl);
   if (!id) return { ok: false, code: 'VALIDATION', message: 'Enter a LinkedIn profile URL like https://www.linkedin.com/in/jane-doe/' };
+  if (String(raw.email || '').trim() && !cleanEmail(raw.email)) return { ok: false, code: 'VALIDATION', message: 'That does not look like a valid email address (for example name@company.com).' };
   const counts = await upsertLeads([{ ...raw }], 'manual');
   return { ok: true, ...counts };
 }
@@ -1548,6 +1572,133 @@ async function exportCsv({ fields, leadIds, neutralize }) {
   const csv = toCsv(rows, cols, neutralize !== false);
   await log('info', `Exported ${rows.length} lead(s) to CSV (${cols.map((c) => c.label).join(', ')}).`, { action: 'export' });
   return { ok: true, csv, count: rows.length, filename: `leadpilot-leads-${todayKey()}.csv` };
+}
+
+/* ───────────────────────────── import of LinkedIn's own connections export ───────────────────────────── */
+
+/**
+ * Minimal RFC 4180 reader: BOM, CRLF / LF / CR, quoted fields with "" escapes and embedded line breaks.
+ * Returns an array of rows (arrays of strings).
+ */
+function parseCsv(input) {
+  const text = String(input || '').replace(/^\uFEFF/, '');
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+      } else field += c;
+    } else if (c === '"' && field === '') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c === '\r') { if (text[i + 1] !== '\n') { row.push(field); rows.push(row); row = []; field = ''; } }
+    else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+const plainKey = (s) =>
+  String(s || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+const nameKey = (f, l) => { const a = plainKey(f); const b = plainKey(l); return a && b ? `${a}|${b}` : ''; };
+const companyKey = (c) =>
+  plainKey(String(c || '').replace(/\b(inc|llc|ltd|pvt|private|limited|corp|corporation|co|company|gmbh|plc)\b\.?/gi, ' '));
+const sameCompany = (a, b) => {
+  const x = companyKey(a);
+  const y = companyKey(b);
+  return !!x && !!y && (x === y || (Math.min(x.length, y.length) >= 4 && (x.startsWith(y) || y.startsWith(x))));
+};
+
+/**
+ * Merge LinkedIn's official "Get a copy of your data -> Connections" export (Connections.csv) into the lead list.
+ * The user downloads that file from LinkedIn themselves; LeadPilot never opens "Contact info" or reads emails from pages.
+ * Email addresses in that file exist only for connections who allowed their connections to see them.
+ *
+ *   - leads are matched by normalised profile URL; if that fails, by exact first+last name AND the same company
+ *     (only when exactly one lead fits) — never by name alone, because a wrong match would send mail to the wrong person
+ *   - an email is filled in only where the lead has none; a different existing email is kept (counted as a conflict)
+ *   - matched leads are marked Connected; connections that are not in the lead list are added only when `addNew` is true
+ */
+async function importConnections(csv, addNew) {
+  if (!csv || !String(csv).trim()) return { ok: false, code: 'VALIDATION', message: 'The file is empty.' };
+  if (String(csv).length > 25000000) return { ok: false, code: 'VALIDATION', message: 'The file is larger than 25 MB — is this really Connections.csv?' };
+
+  const rows = parseCsv(csv);
+  const lc = (v) => String(v || '').trim().toLowerCase();
+  const headIdx = rows.findIndex((r) => { const h = r.map(lc); return h.includes('first name') && h.includes('last name') && (h.includes('url') || h.includes('profile url')); });
+  if (headIdx < 0) {
+    return { ok: false, code: 'VALIDATION', message: 'This does not look like LinkedIn’s Connections.csv: no header row with “First Name”, “Last Name” and “URL”.' };
+  }
+  const head = rows[headIdx].map(lc);
+  const col = (...names) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; };
+  const iFirst = col('first name');
+  const iLast = col('last name');
+  const iUrl = col('url', 'profile url');
+  const iMail = col('email address', 'email');
+  const iCompany = col('company');
+  const iPos = col('position', 'title');
+  if (iMail < 0) return { ok: false, code: 'VALIDATION', message: 'The file has no “Email Address” column.' };
+
+  const summary = { rows: 0, matched: 0, matchedByName: 0, emailsAdded: 0, alreadyHadEmail: 0, emailConflicts: 0, noEmail: 0, invalidEmail: 0, nowConnected: 0, added: 0, notInList: 0, skipped: 0 };
+  const source = `LinkedIn export ${todayKey()}`;
+
+  await mutate(K.leads, () => ({}), (leads) => {
+    const byName = new Map();
+    for (const l of Object.values(leads)) {
+      const k = nameKey(l.firstName, l.lastName);
+      if (k) { if (!byName.has(k)) byName.set(k, []); byName.get(k).push(l); }
+    }
+    const used = new Set();
+    for (const r of rows.slice(headIdx + 1)) {
+      if (!r.length || r.every((x) => !String(x).trim())) continue;
+      summary.rows++;
+      const url = r[iUrl];
+      const id = normalizeProfileUrl(url);
+      if (!id) { summary.skipped++; continue; }
+      const first = r[iFirst];
+      const last = r[iLast];
+      const company = iCompany >= 0 ? r[iCompany] : '';
+      const position = iPos >= 0 ? r[iPos] : '';
+      const rawMail = String(r[iMail] || '').trim();
+      const email = cleanEmail(rawMail);
+
+      let lead = leads[id];
+      let byNameMatch = false;
+      if (!lead) {
+        const cands = byName.get(nameKey(first, last)) || [];
+        if (cands.length === 1 && cands[0].company && sameCompany(cands[0].company, company) && !used.has(cands[0].id)) { lead = cands[0]; byNameMatch = true; }
+      }
+      if (!lead) {
+        if (!addNew) { summary.notInList++; continue; }
+        leads[id] = makeLead({ profileUrl: url, firstName: first, lastName: last, company, jobTitle: position, connectionStatus: 'Connected', email }, source);
+        summary.added++;
+        if (email) summary.emailsAdded++; else if (rawMail) summary.invalidEmail++; else summary.noEmail++;
+        continue;
+      }
+
+      used.add(lead.id);
+      summary.matched++;
+      if (byNameMatch) summary.matchedByName++;
+      if (lead.connectionStatus !== 'Connected') { lead.connectionStatus = 'Connected'; summary.nowConnected++; }
+      if (!lead.jobTitle && position) lead.jobTitle = str(position, 200);
+      if (!lead.company && company) lead.company = str(company, 200);
+      if (!lead.firstName && first) lead.firstName = titleCaseName(first);
+      if (!lead.lastName && last) lead.lastName = titleCaseName(last);
+      if (email) {
+        if (!lead.email) { lead.email = email; summary.emailsAdded++; }
+        else if (lead.email === email) summary.alreadyHadEmail++;
+        else summary.emailConflicts++; // keep what is already there; the user decides
+      } else if (rawMail) summary.invalidEmail++;
+      else summary.noEmail++;
+      lead.updatedAt = iso();
+    }
+  });
+  await log('success', `Imported LinkedIn connections export: ${summary.rows} row(s) → ${summary.matched} matched, ${summary.emailsAdded} email(s) added, ${summary.added} new lead(s), ${summary.notInList} not in your list.`, { action: 'import' });
+  return { ok: true, ...summary };
 }
 
 /* ───────────────────────────── state for the popup ───────────────────────────── */
@@ -1734,6 +1885,7 @@ async function handle(msg, sender) {
     case 'ADD_LEAD': return addManualLead(msg.lead || {});
     case 'DELETE_LEADS': return deleteLeads(msg.ids);
     case 'EXPORT_CSV': return exportCsv(msg);
+    case 'IMPORT_CONNECTIONS': return importConnections(String(msg.csv || ''), msg.addNew === true);
     case 'PREVIEW_TEMPLATE': {
       const settings = await getSettings();
       let lead = msg.leadId ? (await getLeads())[msg.leadId] : null;

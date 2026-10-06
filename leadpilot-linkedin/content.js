@@ -31,7 +31,7 @@
   // A copy orphaned by an extension reload (its chrome.runtime is gone) must not block a fresh one.
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
   if (window.__leadPilotContent && window.__leadPilotContent.alive && window.__leadPilotContent.alive()) return;
-  const CS_VERSION = '1.0.2';
+  const CS_VERSION = '1.1.0';
   window.__leadPilotContent = { version: CS_VERSION, alive }; // finder functions are attached at the bottom for DevTools debugging
 
   /* ───────────────────────────── generic helpers ───────────────────────────── */
@@ -56,7 +56,7 @@
   const norm = (s) =>
     clean(s)
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+      .replace(/\p{M}/gu, '')
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .replace(/\s+/g, ' ')

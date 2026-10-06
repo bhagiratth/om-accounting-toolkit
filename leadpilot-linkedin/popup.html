@@ -18,7 +18,10 @@
           <p class="tagline">Compliance-first outreach assistant</p>
         </div>
       </div>
-      <button id="themeBtn" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☾</button>
+      <div class="hero-btns">
+        <button id="tabBtn" class="icon-btn" type="button" aria-label="Open LeadPilot in a browser tab" title="Open in a tab (needed to pick a file on some systems)">↗</button>
+        <button id="themeBtn" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☾</button>
+      </div>
     </div>
     <div class="account-row">
       <div class="segmented" role="radiogroup" aria-label="Account to work with">
@@ -152,6 +155,8 @@
           <option value="dnc">Do not contact</option>
           <option value="converted">Converted</option>
           <option value="paused">Paused</option>
+          <option value="has_email">Has email</option>
+          <option value="no_email">No email</option>
         </select>
       </div>
       <div class="toolbar small">
@@ -170,8 +175,23 @@
           <label>Last name<input id="nlLast" type="text"></label>
           <label>Job title<input id="nlTitle" type="text"></label>
           <label>Company<input id="nlCompany" type="text"></label>
+          <label class="span2">Email (optional)<input id="nlEmail" type="text" placeholder="name@company.com" autocomplete="off"></label>
         </div>
         <button id="nlAdd" class="btn" type="button">Add lead</button>
+      </details>
+
+      <details class="card">
+        <summary>Import emails from LinkedIn’s connections export</summary>
+        <p class="hint">LinkedIn does not show email addresses in search results, and LeadPilot never opens “Contact info” or reads emails from pages. The compliant way is LinkedIn’s own data export: <strong>Settings &amp; Privacy → Data privacy → Get a copy of your data → Connections</strong>. When LinkedIn sends you the download link, unzip it and choose <strong>Connections.csv</strong> here. It holds an email only for connections who allowed their connections to see it.</p>
+        <label class="check"><input type="checkbox" id="impAddNew"> Also add connections that are not in my lead list yet</label>
+        <label>Choose Connections.csv<input id="impFile" type="file" accept=".csv,text/csv"></label>
+        <p id="impFileInfo" class="hint"></p>
+        <p class="hint">If this window closes when you pick a file, press <strong>↗</strong> at the top to open LeadPilot in a browser tab, or paste the file’s content below.</p>
+        <label for="impPaste">…or paste the file’s content</label>
+        <textarea id="impPaste" rows="3" spellcheck="false" placeholder="First Name,Last Name,URL,Email Address,Company,Position,Connected On"></textarea>
+        <div class="btns"><button id="impBtn" class="btn btn-primary" type="button">Import</button></div>
+        <p id="impResult" class="note" role="status" hidden></p>
+        <p class="hint">Leads are matched by profile URL, or by exact name + the same company when exactly one lead fits. An email you already have is never overwritten. Use emails in line with the person’s consent and the law that applies to you (for example GDPR or India’s DPDP Act), and always give an easy way to opt out.</p>
       </details>
 
       <details class="card" open>

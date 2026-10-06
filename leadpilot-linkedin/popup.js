@@ -249,6 +249,41 @@ function renderStartCard() {
 /* ───────────────────────────── diagnostics ───────────────────────────── */
 
 let diagText = '';
+let impText = '';
+const TAB_MODE = new URLSearchParams(location.search).get('tab') === '1';
+if (TAB_MODE) document.documentElement.classList.add('tabmode');
+
+function showImportResult(r) {
+  const box = $('#impResult');
+  box.hidden = false;
+  box.classList.toggle('bad', !r.ok);
+  if (!r.ok) { box.textContent = r.message || 'Import failed.'; return; }
+  const bits = [
+    `${r.rows} row(s) read`,
+    `${r.matched} matched your leads${r.matchedByName ? ` (${r.matchedByName} by name + company)` : ''}`,
+    `${r.emailsAdded} email(s) added`,
+    `${r.noEmail} without a shared email`,
+    r.alreadyHadEmail ? `${r.alreadyHadEmail} already had it` : null,
+    r.emailConflicts ? `${r.emailConflicts} kept their existing email` : null,
+    r.invalidEmail ? `${r.invalidEmail} invalid` : null,
+    r.nowConnected ? `${r.nowConnected} marked Connected` : null,
+    r.added ? `${r.added} new lead(s) added` : null,
+    r.notInList ? `${r.notInList} not in your list` : null,
+    r.skipped ? `${r.skipped} row(s) without a profile URL skipped` : null,
+  ].filter(Boolean);
+  box.textContent = `${bits.join(' · ')}.`;
+}
+
+async function runImport(text) {
+  if (!String(text).trim()) { toast('Choose Connections.csv (or paste its content) first.', true); return; }
+  const btn = $('#impBtn');
+  btn.disabled = true;
+  const r = await api('IMPORT_CONNECTIONS', { csv: text, addNew: $('#impAddNew').checked });
+  btn.disabled = false;
+  showImportResult(r);
+  toast(r.ok ? `Import finished: ${r.emailsAdded} email(s) added.` : (r.message || 'Import failed.'), !r.ok);
+  if (r.ok) { impText = ''; $('#impPaste').value = ''; $('#impFile').value = ''; $('#impFileInfo').textContent = ''; await loadLeads(); scheduleRefresh(0); }
+}
 
 async function copyText(text) {
   try {
@@ -487,7 +522,7 @@ async function loadLeads() {
 
 function leadFilterFn(l) {
   const q = $('#leadFilter').value.trim().toLowerCase();
-  if (q && ![fullName(l), l.company, l.jobTitle, l.location, l.industry, l.notes].join(' ').toLowerCase().includes(q)) return false;
+  if (q && ![fullName(l), l.email, l.company, l.jobTitle, l.location, l.industry, l.notes].join(' ').toLowerCase().includes(q)) return false;
   const st = $('#leadStatus').value;
   const now = Date.now();
   switch (st) {
@@ -499,6 +534,8 @@ function leadFilterFn(l) {
     case 'dnc': return l.messageStatus === 'Do Not Contact';
     case 'converted': return l.messageStatus === 'Converted';
     case 'paused': return !!l.paused;
+    case 'has_email': return !!l.email;
+    case 'no_email': return !l.email;
     default: return true;
   }
 }
@@ -531,7 +568,8 @@ function renderLeads() {
     const li = h('li', {},
       h('label', { class: 'lead-main' }, cb, h('span', {},
         h('span', { class: 'lead-name', text: fullName(l) }),
-        h('span', { class: 'lead-sub', text: [l.jobTitle, l.company].filter(Boolean).join(' · ') || l.profileUrl })
+        h('span', { class: 'lead-sub', text: [l.jobTitle, l.company].filter(Boolean).join(' · ') || l.profileUrl }),
+        l.email ? h('span', { class: 'lead-sub', text: `✉ ${l.email}` }) : null
       )),
       h('div', { class: 'chips' },
         chipFor(l.connectionStatus, l.connectionStatus === 'Connected' ? 'ok' : l.connectionStatus === 'Pending' ? 'warn' : ''),
@@ -566,6 +604,7 @@ function leadEditor(l) {
   const box = h('div', { class: 'lead-edit' },
     h('div', { class: 'grid2' },
       f('First name', 'first', l.firstName), f('Last name', 'last', l.lastName),
+      h('label', { class: 'span2' }, 'Email', h('input', { type: 'text', id: 'le_email', value: l.email || '', placeholder: 'name@company.com', autocomplete: 'off' })),
       f('Job title', 'title', l.jobTitle), f('Company', 'company', l.company),
       f('Location', 'loc', l.location), f('Industry', 'ind', l.industry),
       sel('Connection status', 'conn', ['Not Connected', 'Pending', 'Connected', 'Unknown'], l.connectionStatus),
@@ -577,8 +616,9 @@ function leadEditor(l) {
     h('div', { class: 'btns' },
       h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: 'Save', onclick: async () => {
         const g = (id) => $(`#le_${id}`).value;
-        const r = await api('PATCH_LEAD', { id: l.id, patch: { firstName: g('first'), lastName: g('last'), jobTitle: g('title'), company: g('company'), location: g('loc'), industry: g('ind'), connectionStatus: g('conn'), messageStatus: g('msg'), nextFollowUp: g('next') ? new Date(g('next')).toISOString() : '', paused: $('#le_paused').checked, notes: g('notes') } });
+        const r = await api('PATCH_LEAD', { id: l.id, patch: { firstName: g('first'), lastName: g('last'), email: g('email'), jobTitle: g('title'), company: g('company'), location: g('loc'), industry: g('ind'), connectionStatus: g('conn'), messageStatus: g('msg'), nextFollowUp: g('next') ? new Date(g('next')).toISOString() : '', paused: $('#le_paused').checked, notes: g('notes') } });
         toast(r.ok ? 'Lead saved.' : r.message, !r.ok);
+        if (!r.ok) return; // keep the editor open so the invalid value can be fixed
         expandedLead = null;
         await loadLeads();
         scheduleRefresh(0);
@@ -962,16 +1002,16 @@ function wire() {
     await loadLeads();
     scheduleRefresh(0);
   });
-  $('#openSearchBtn').addEventListener('click', async () => { const r = await act('OPEN_SEARCH', {}, 'Search opened in the attached tab.'); if (r.ok) window.close(); });
+  $('#openSearchBtn').addEventListener('click', async () => { const r = await act('OPEN_SEARCH', {}, 'Search opened in the attached tab.'); if (r.ok && !TAB_MODE) window.close(); });
   $('#leadFilter').addEventListener('input', () => { leadLimit = 40; renderLeads(); });
   $('#leadStatus').addEventListener('change', () => { leadLimit = 40; renderLeads(); });
   $('#selAllBtn').addEventListener('click', () => { leads.filter(leadFilterFn).forEach((l) => selected.add(l.id)); saveSelection(); renderLeads(); renderRun(); });
   $('#selNoneBtn').addEventListener('click', () => { selected.clear(); saveSelection(); renderLeads(); renderRun(); });
   $('#leadMore').addEventListener('click', () => { leadLimit += 40; renderLeads(); });
   $('#nlAdd').addEventListener('click', async () => {
-    const r = await api('ADD_LEAD', { lead: { profileUrl: $('#nlUrl').value, firstName: $('#nlFirst').value, lastName: $('#nlLast').value, jobTitle: $('#nlTitle').value, company: $('#nlCompany').value } });
+    const r = await api('ADD_LEAD', { lead: { profileUrl: $('#nlUrl').value, firstName: $('#nlFirst').value, lastName: $('#nlLast').value, jobTitle: $('#nlTitle').value, company: $('#nlCompany').value, email: $('#nlEmail').value } });
     toast(r.ok ? (r.added ? 'Lead added.' : 'That profile was already in your list.') : r.message, !r.ok);
-    if (r.ok) { ['#nlUrl', '#nlFirst', '#nlLast', '#nlTitle', '#nlCompany'].forEach((s) => { $(s).value = ''; }); await loadLeads(); scheduleRefresh(0); }
+    if (r.ok) { ['#nlUrl', '#nlFirst', '#nlLast', '#nlTitle', '#nlCompany', '#nlEmail'].forEach((s) => { $(s).value = ''; }); await loadLeads(); scheduleRefresh(0); }
   });
   $('#exportBtn').addEventListener('click', onExport);
   $('#diagRun').addEventListener('click', () => runDiag());
@@ -1022,6 +1062,23 @@ function wire() {
     settingsFilled = false;
     scheduleRefresh(0);
   });
+
+  // open in a browser tab (a file picker closes the small popup on some systems)
+  $('#tabBtn').hidden = TAB_MODE;
+  $('#tabBtn').addEventListener('click', async () => {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('popup.html?tab=1') });
+    window.close();
+  });
+
+  // import LinkedIn's Connections.csv
+  $('#impFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 25e6) { toast('That file is larger than 25 MB — is it really Connections.csv?', true); e.target.value = ''; return; }
+    impText = await f.text();
+    $('#impFileInfo').textContent = `Loaded ${f.name} (${Math.max(1, Math.round(f.size / 1024))} KB). Press Import.`;
+  });
+  $('#impBtn').addEventListener('click', () => runImport(impText || $('#impPaste').value));
 
   // live updates from the service worker
   chrome.storage.onChanged.addListener((changes, area) => {

@@ -276,3 +276,9 @@ legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .note.bad { background: var(--danger-bg); color: var(--danger); }
 textarea.mono { font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+
+/* ───── header buttons / open-in-a-tab layout ───── */
+.hero-btns { display: flex; gap: 6px; }
+html.tabmode { background: var(--bg); }
+html.tabmode body { width: 520px; max-width: 100%; margin: 0 auto; min-height: 100vh; box-shadow: 0 0 0 1px var(--border); }
+input[type="file"] { padding: 6px; }
