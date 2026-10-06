@@ -31,7 +31,7 @@
   // A copy orphaned by an extension reload (its chrome.runtime is gone) must not block a fresh one.
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
   if (window.__leadPilotContent && window.__leadPilotContent.alive && window.__leadPilotContent.alive()) return;
-  const CS_VERSION = '1.0.0';
+  const CS_VERSION = '1.0.1';
   window.__leadPilotContent = { version: CS_VERSION, alive }; // finder functions are attached at the bottom for DevTools debugging
 
   /* ───────────────────────────── generic helpers ───────────────────────────── */
@@ -186,9 +186,20 @@
       /too many (requests|invitations|messages|attempts)/i,
       /you('|’)re (sending|doing) (this )?too (fast|many)/i,
       /temporar(y|ily) (limit|limited|unable|restrict)/i,
-      /(slow down|try again later)/i,
     ],
   };
+
+  // Generic phrases such as "try again later" also appear in harmless error toasts, so they only count
+  // when the same message also contains a limit-type word.
+  const RATE_WEAK = /(slow down|try again later)/i;
+  const RATE_CONTEXT = /(limit|restrict|unusual|too many|temporar|suspicious)/i;
+
+  /** First pattern of `group` that matches `t` (or null). */
+  function matchGroup(group, t) {
+    for (const re of PATTERNS[group]) if (re.test(t)) return re;
+    if (group === 'rate' && RATE_WEAK.test(t) && RATE_CONTEXT.test(t)) return RATE_WEAK;
+    return null;
+  }
 
   function alertContainers() {
     // SELECTOR: [role="dialog"], [role="alertdialog"], [role="alert"], .artdeco-modal, .artdeco-toast-item, .artdeco-inline-feedback
@@ -237,10 +248,15 @@
       return { status: 'login_required', evidence: 'A sign-in form is displayed', where: 'dom' };
     }
 
-    // Embedded challenge widgets.
-    // SELECTOR: iframe[src*="captcha" i], #captcha-internal, [id*="captcha" i]
-    // ASSUMPTION: LinkedIn mounts its challenge in an element/iframe whose id or src mentions "captcha".
-    const widget = qs(document, 'iframe[src*="captcha" i], #captcha-internal, [id*="captcha" i]');
+    // Embedded challenge widgets — only when actually shown: a hidden helper node or the small invisible-reCAPTCHA
+    // badge that many sites load in the background is not a challenge.
+    // SELECTOR: iframe[src*="captcha" i], iframe[src*="arkose" i], iframe[src*="funcaptcha" i], #captcha-internal, [id*="captcha" i]  (visible, >=150x100px, not .grecaptcha-badge)
+    // ASSUMPTION: a real challenge is a large visible widget whose id or src mentions captcha / arkose.
+    const widget = qsa(document, 'iframe[src*="captcha" i], iframe[src*="arkose" i], iframe[src*="funcaptcha" i], #captcha-internal, [id*="captcha" i]').find((el) => {
+      if (el.closest('.grecaptcha-badge') || !isVisible(el)) return false;
+      const r = el.getBoundingClientRect();
+      return r.width >= 150 && r.height >= 100;
+    });
     if (widget) return { status: 'security_challenge', evidence: 'A CAPTCHA / security widget is displayed', where: 'dom' };
 
     // Text of alert-like containers only. Order matters: restriction > challenge > rate/activity warning.
@@ -248,16 +264,14 @@
       for (const c of alertContainers()) {
         const t = scanText(c);
         if (!t || t.length > 3000) continue;
-        for (const re of PATTERNS[group]) {
-          const m = t.match(re);
-          if (m) {
-            const i = Math.max(0, t.search(re) - 40);
-            return {
-              status: group === 'restricted' ? 'restricted' : group === 'captcha' ? 'security_challenge' : 'rate_warning',
-              evidence: t.slice(i, i + 200),
-              where: c.getAttribute('role') || c.className || 'alert',
-            };
-          }
+        const re = matchGroup(group, t);
+        if (re) {
+          const i = Math.max(0, t.search(re) - 40);
+          return {
+            status: group === 'restricted' ? 'restricted' : group === 'captcha' ? 'security_challenge' : 'rate_warning',
+            evidence: t.slice(i, i + 200),
+            where: c.getAttribute('role') || c.className || 'alert',
+          };
         }
       }
     }
@@ -429,32 +443,71 @@
     return out;
   }
 
+  /**
+   * Structure-based discovery for markup we have no selectors for (hashed class names, no <li> / role=listitem):
+   * search results are repeated sibling blocks that each contain a profile link. Find the element whose children
+   * hold the most such blocks (belonging to different people) and treat every block as a card.
+   */
+  function cardsBySiblingBlocks(main) {
+    const anchors = profileAnchors(main);
+    if (anchors.length < 2) return [];
+    const parents = new Set();
+    for (const a of anchors) {
+      for (let n = a.parentElement; n; n = n.parentElement) {
+        parents.add(n);
+        if (n === main) break;
+      }
+    }
+    const depthOf = (el) => { let d = 0; for (let n = el; n; n = n.parentElement) d++; return d; };
+    let best = null;
+    for (const p of parents) {
+      const blocks = Array.from(p.children).filter((c) => isVisible(c) && profileAnchors(c).length);
+      if (blocks.length < 2) continue;
+      const people = new Set(blocks.map(primarySlug).filter(Boolean));
+      if (people.size < 2) continue;
+      const depth = depthOf(p);
+      if (!best || people.size > best.score || (people.size === best.score && depth < best.depth)) best = { blocks, score: people.size, depth };
+    }
+    return best ? best.blocks : [];
+  }
+
+  /**
+   * The discovery strategies, in the order they are tried: [name, finder]. Kept as a list so the diagnostics report
+   * can show how many cards each strategy sees on the real page.
+   */
+  function resultCardLayers(main) {
+    return [
+      // SELECTOR: main [role="listitem"], main li   (each filtered to nodes containing a /in/ profile link)
+      // ASSUMPTION: result rows are exposed as ARIA list items or <li> elements inside <main>.
+      ['list items', () => resolveCards(qsa(main, '[role="listitem"], li'))],
+      // SELECTOR: [data-chameleon-result-urn]
+      // ASSUMPTION: each search result root carries this data attribute (value is the person's URN).
+      ['data-chameleon-result-urn', () => resolveCards(qsa(main, '[data-chameleon-result-urn]'))],
+      // SELECTOR: li.reusable-search__result-container, div.entity-result
+      // ASSUMPTION: legacy-but-stable LinkedIn classes still mark a result container.
+      ['legacy result classes', () => resolveCards(qsa(main, 'li.reusable-search__result-container, div.entity-result'))],
+      // SELECTOR: the element whose direct children are the most blocks that each contain a different person's /in/ link
+      // ASSUMPTION: even with obfuscated class names, results are repeated sibling blocks (one per person).
+      ['repeated sibling blocks', () => resolveCards(cardsBySiblingBlocks(main))],
+      // SELECTOR: a[href*="/in/"] climbed to the largest ancestor that still contains only that one profile link
+      // ASSUMPTION: a card is the biggest block around one person's link that does not include another person.
+      ['anchor climb', () => resolveCards(cardsFromAnchors(main))],
+    ];
+  }
+
   /** PROFILE / CARD DISCOVERY — update here when LinkedIn changes the search-results markup. */
   function findResultCards() {
     // SELECTOR: main
     // ASSUMPTION: LinkedIn wraps page content in a single <main>; if absent we search the whole body.
     const main = qs(document, 'main') || document.body;
-    const layers = [
-      // SELECTOR: main [role="listitem"], main li   (each filtered to nodes containing a /in/ profile link)
-      // ASSUMPTION: result rows are exposed as ARIA list items or <li> elements inside <main>.
-      () => resolveCards(qsa(main, '[role="listitem"], li')),
-      // SELECTOR: [data-chameleon-result-urn]
-      // ASSUMPTION: each search result root carries this data attribute (value is the person's URN).
-      () => resolveCards(qsa(main, '[data-chameleon-result-urn]')),
-      // SELECTOR: li.reusable-search__result-container, div.entity-result
-      // ASSUMPTION: legacy-but-stable LinkedIn classes still mark a result container.
-      () => resolveCards(qsa(main, 'li.reusable-search__result-container, div.entity-result')),
-      // SELECTOR: a[href*="/in/"] climbed to the largest ancestor that still contains only that one profile link
-      // ASSUMPTION: a card is the biggest block around one person's link that does not include another person.
-      () => resolveCards(cardsFromAnchors(main)),
-    ];
+    const layers = resultCardLayers(main);
     for (let i = 0; i < layers.length; i++) {
       try {
-        const cards = layers[i]();
-        if (cards && cards.length) return { cards, layer: i };
+        const cards = layers[i][1]();
+        if (cards && cards.length) return { cards, layer: i, layerName: layers[i][0] };
       } catch (_) { /* next layer */ }
     }
-    return { cards: [], layer: -1 };
+    return { cards: [], layer: -1, layerName: '' };
   }
 
   /** PROFILE URL EXTRACTION (search card). */
@@ -1370,6 +1423,216 @@
     return { ok: true, items, target: pt === 'company' ? 'company' : 'personal' };
   }
 
+  /* ───────────────────────────── diagnostics (read-only) ───────────────────────────── */
+
+  // The report is meant to be pasted to whoever maintains the selectors. It describes the STRUCTURE of the page
+  // (tags, roles, class names, which finder matched what) and never copies page text: every text node, label, alt text
+  // and link is reduced to a length or a pattern. Only generic LinkedIn UI words ("Connect", "Message", "2nd"…) stay readable.
+  // Nothing here clicks, types or navigates.
+  const SAFE_TEXT = /^(?:[•·]\s*)?(?:connect|message|follow|following|pending|more|more actions|send|send now|send invitation|save|view profile|1st|2nd|3rd\+?|add a note|send without a note|start a post|withdraw|admin tools|admin view|manage page|resources)$/i;
+  const UI_WORDS = new Set(
+    ('invite to connect message follow following pending withdraw invitation sent more actions click skip send save view profile ' +
+      'current company experience card add a note without 1st 2nd 3rd degree connection status is online reachable').split(' ')
+  );
+  const KNOWN_PATH_SEGMENTS = new Set(['in', 'preload', 'custom-invite', 'messaging', 'compose', 'thread', 'search', 'results', 'people', 'company', 'feed', 'admin', 'posts', 'recent-activity', 'all', 'details', 'overlay', 'contact-info']);
+
+  const shapeText = (t) => {
+    t = clean(t);
+    if (!t) return '';
+    return SAFE_TEXT.test(t) ? t : `[${t.length}ch]`;
+  };
+  const shapeLabel = (t) =>
+    clean(t)
+      .split(' ')
+      .map((w) => (UI_WORDS.has(w.toLowerCase().replace(/[^a-z0-9+]/g, '')) ? w : '·'))
+      .join(' ')
+      .slice(0, 80);
+
+  function shapeHref(h) {
+    try {
+      const u = new URL(h, location.href);
+      const segs = u.pathname.split('/').filter(Boolean).map((x) => (KNOWN_PATH_SEGMENTS.has(x) ? x : '…'));
+      return `${u.hostname === location.hostname ? '' : u.hostname}/${segs.join('/')}${u.search ? '?…' : ''}`;
+    } catch (_) {
+      return '[href]';
+    }
+  }
+
+  function redactPath(path) {
+    return String(path)
+      .replace(/^(\/in\/)[^/]+/i, '$1<profile>')
+      .replace(/^(\/company\/)[^/]+/i, '$1<page>')
+      .replace(/^(\/messaging\/thread\/)[^/]+/i, '$1<thread>')
+      .replace(/^(\/school\/)[^/]+/i, '$1<school>');
+  }
+
+  function describeEl(el) {
+    if (!el) return null;
+    const label = el.getAttribute('aria-label');
+    const href = el.getAttribute('href');
+    return {
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || undefined,
+      label: label ? shapeLabel(label) : undefined,
+      text: shapeText(textOf(el)) || undefined,
+      href: href ? shapeHref(href) : undefined,
+      disabled: isDisabled(el) || undefined,
+      visible: isVisible(el),
+    };
+  }
+
+  const KEEP_ATTRS = new Set(['role', 'type', 'aria-hidden', 'aria-expanded', 'aria-haspopup', 'aria-disabled', 'contenteditable', 'tabindex', 'target', 'rel', 'disabled']);
+
+  /** Indented tag outline of `root` with all content removed (see the note above). */
+  function skeleton(root, maxDepth = 5, maxNodes = 80) {
+    if (!root) return '';
+    const lines = [];
+    let count = 0;
+    const walk = (el, depth) => {
+      if (count >= maxNodes) return;
+      count++;
+      const attrs = [];
+      for (const a of Array.from(el.attributes)) {
+        const n = a.name;
+        if (KEEP_ATTRS.has(n)) attrs.push(`${n}=${a.value}`);
+        else if (n === 'class') attrs.push(`class="${a.value.split(/\s+/).filter(Boolean).slice(0, 4).join(' ')}"`);
+        else if (n === 'href') attrs.push(`href=${shapeHref(a.value)}`);
+        else if (n === 'aria-label') attrs.push(`aria-label="${shapeLabel(a.value)}"`);
+        else if (n === 'alt' || n === 'title' || n === 'placeholder') attrs.push(`${n}=[${a.value.length}ch]`);
+        else if (/^data-(view-name|test-id|anonymize|control-name|tracking-control-name)$/.test(n)) attrs.push(`${n}=${a.value.slice(0, 40)}`);
+        else if (n.startsWith('data-') || n === 'componentkey' || n === 'id') attrs.push(n); // name only: the values may be ids / URNs
+      }
+      const own = Array.from(el.childNodes)
+        .filter((x) => x.nodeType === 3)
+        .map((x) => x.textContent)
+        .join(' ');
+      const t = shapeText(own);
+      const pad = '  '.repeat(depth);
+      lines.push(`${pad}<${el.tagName.toLowerCase()}${attrs.length ? ' ' + attrs.join(' ') : ''}>${t ? ' ' + t : ''}`);
+      if (depth >= maxDepth) {
+        if (el.children.length) lines.push(`${pad}  … ${el.children.length} child element(s) not shown`);
+        return;
+      }
+      const kids = Array.from(el.children);
+      for (const c of kids.slice(0, 12)) walk(c, depth + 1);
+      if (kids.length > 12) lines.push(`${pad}  … +${kids.length - 12} more`);
+    };
+    walk(root, 0);
+    if (count >= maxNodes) lines.push('… (truncated)');
+    return lines.join('\n');
+  }
+
+  function diagnoseSearch(main) {
+    const layers = resultCardLayers(main).map(([name, fn]) => {
+      let n = -1;
+      try { n = fn().length; } catch (_) { /* counted as -1 = threw */ }
+      return { name, cards: n };
+    });
+    const { cards, layerName } = findResultCards();
+    const links = profileAnchors(main);
+    const out = {
+      profileLinks: links.length,
+      distinctProfiles: new Set(links.map((a) => slugOfUrl(normalizeProfileUrl(a.href))).filter(Boolean)).size,
+      layers,
+      layerUsed: layerName || null,
+      cardCount: cards.length,
+      emptyResultsMessage: /no results found/i.test(textOf(main)),
+      sample: [],
+    };
+    for (const card of cards.slice(0, 2)) {
+      try {
+        const url = extractProfileUrl(card);
+        const name = url ? extractName(card, url) : '';
+        const degree = cardDegree(card);
+        out.sample.push({
+          urlFound: !!url,
+          nameFound: !!name,
+          nameLength: name.length,
+          jobTitleLength: extractJobTitle(card, name).length,
+          companyLength: extractCompany(card, name).length,
+          locationLength: extractCardLocation(card, name).length,
+          degree,
+          connectionStatus: cardConnectionStatus(card, degree),
+          lines: linesOf(card).slice(0, 14).map(shapeText),
+          skeleton: skeleton(card, 6, 70),
+        });
+      } catch (e) {
+        out.sample.push({ error: String((e && e.message) || e).slice(0, 160) });
+      }
+    }
+    return out;
+  }
+
+  function diagnoseProfile() {
+    const h1 = profileH1();
+    const top = profileTopCard();
+    const name = extractProfileName();
+    const headline = top ? extractProfileHeadline(top, name) : '';
+    const degree = top ? extractDegree(top) : null;
+    return {
+      h1: describeEl(h1),
+      nameFound: !!name,
+      topCardFound: !!top,
+      headlineLength: headline.length,
+      jobTitleLength: extractProfileJobTitle(headline).length,
+      companyLength: top ? extractProfileCompany(top, headline).length : 0,
+      locationLength: top ? extractProfileLocation(top, name, headline).length : 0,
+      degree,
+      connectionState: top ? profileConnectionState(top, degree) : null,
+      classifiedActions: top ? collectProfileActions(top).map((a) => ({ kind: a.kind, ...describeEl(a.el) })) : [],
+      controlsInTopCard: top ? qsa(top, 'button, a, [role="button"]').filter(isVisible).slice(0, 25).map(describeEl) : [],
+      topCardSkeleton: skeleton(top, 5, 90),
+    };
+  }
+
+  async function diagnose() {
+    const pt = pageType();
+    const main = qs(document, 'main');
+    const finding = detectSecurityState();
+    const report = {
+      contentScript: { version: CS_VERSION },
+      page: {
+        host: location.hostname,
+        path: redactPath(location.pathname),
+        type: pt,
+        readyState: document.readyState,
+        language: document.documentElement.lang || '',
+        hasMain: !!main,
+        h1Count: qsa(document, 'h1').length,
+        globalNav: !!qs(document, '#global-nav, nav.global-nav, header[role="banner"]'),
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+      },
+      security: {
+        status: finding.status,
+        where: String(finding.where || '').slice(0, 60) || undefined,
+        evidence: finding.evidence ? String(finding.evidence).slice(0, 160) : undefined,
+      },
+      alertContainers: alertContainers().slice(0, 6).map((c) => {
+        const t = scanText(c);
+        return {
+          tag: c.tagName.toLowerCase(),
+          role: c.getAttribute('role') || '',
+          visible: isVisible(c),
+          textLength: t.length,
+          matches: ['restricted', 'captcha', 'rate'].filter((g) => matchGroup(g, t)),
+        };
+      }),
+      messageComposers: findMessageComposer().length,
+    };
+    try {
+      if (pt === 'search_people') report.search = diagnoseSearch(main || document.body);
+      else if (pt === 'profile') report.profile = diagnoseProfile();
+      else if (pt === 'feed') report.feed = { postTrigger: describeEl(findPostTrigger()), composerOpen: !!findPostComposer() };
+      else if (pt === 'company') {
+        const c = detectCompanyPage();
+        report.company = { isAdminView: c.isAdminView, nameFound: !!c.name, postTrigger: describeEl(findPostTrigger()) };
+      }
+    } catch (e) {
+      report.error = String((e && e.message) || e).slice(0, 200);
+    }
+    return { ok: true, report };
+  }
+
   /* ───────────────────────────── message router ───────────────────────────── */
 
   let busy = false;
@@ -1378,13 +1641,14 @@
     PING: async () => ({ ok: true, version: CS_VERSION, pageType: pageType(), url: location.href }),
     SCAN_SAFETY: async () => ({ ok: true, finding: detectSecurityState() }),
     DETECT_COMPANY: async () => ({ ok: true, company: detectCompanyPage() }),
+    DIAGNOSE: diagnose,
     COLLECT_LEADS: collectLeads,
     PREPARE_PROFILE: prepareProfile,
     EXECUTE_ACTION: (m) => (m.action === 'connect' ? executeConnect(m) : executeMessage(m)),
     PUBLISH_POST: publishPost,
     COLLECT_ENGAGEMENT: collectEngagement,
   };
-  const PASSIVE = new Set(['PING', 'SCAN_SAFETY', 'DETECT_COMPANY']);
+  const PASSIVE = new Set(['PING', 'SCAN_SAFETY', 'DETECT_COMPANY', 'DIAGNOSE']);
 
   function errorResponse(e) {
     if (e instanceof LPError) return { ok: false, code: e.code, message: e.message, ...e.extra };
@@ -1414,6 +1678,7 @@
     pageType, findResultCards, extractProfileUrl, extractName, extractProfileName, extractJobTitle, extractCompany,
     extractProfileHeadline, extractProfileCompany, profileTopCard, collectProfileActions, findConnectButton, findMessageButton,
     findMessageComposer, findMessageSendButton, findPostTrigger, findPostComposer, detectCompanyPage, detectSecurityState,
+    diagnose, skeleton,
   });
 
   startWatcher();

@@ -267,3 +267,12 @@ legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
   .progress-fill { transition: none; }
   .progress.indeterminate .progress-fill { animation: none; width: 100%; opacity: .5; }
 }
+
+/* ───── getting started / diagnostics ───── */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.steps li { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
+.steps .mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--info-bg); font-weight: 700; font-size: 11px; }
+.steps li.done .mark { background: var(--ok-bg); color: var(--ok); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.note.bad { background: var(--danger-bg); color: var(--danger); }
+textarea.mono { font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; }

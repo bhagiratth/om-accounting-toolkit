@@ -32,13 +32,16 @@ a browser screenshot of the SVG at 16 / 32 / 48 / 128 px with a transparent back
 
 ## 1. Installation
 
-1. Download / clone this folder (`leadpilot-linkedin/`).
-2. Open `chrome://extensions`.
-3. Switch **Developer mode** on (top-right).
-4. Click **Load unpacked** and select the `leadpilot-linkedin` folder (the one containing `manifest.json`).
-5. Pin the extension (puzzle-piece menu → pin) so the popup is one click away.
+1. Get the folder: clone the repo, or unzip the zip you were given (right-click → **Extract All…** on Windows; double-click on macOS).
+2. Open the extracted folder and check that you can see **`manifest.json` directly inside it**, next to `background.js`, `popup.html` and `icons/`. That is the folder to load. (If you see a single folder with the same name inside, open it and use that one.)
+3. Open `chrome://extensions`.
+4. Switch **Developer mode** on (top-right).
+5. Click **Load unpacked** and select that folder. Chrome saying *"Manifest file is missing or unreadable"* means you picked a folder that does not contain `manifest.json` (usually the outer one, or the zip itself).
+6. Pin the extension (puzzle-piece menu → pin) so the popup is one click away. The popup footer (Settings tab) shows the installed version.
 
 There is nothing to install or compile.
+
+**First run:** open linkedin.com in the tab you want to use, click the LeadPilot icon (the **Getting started** card on the Dashboard shows the next step), and try one lead in Review Before Send mode. If something does not work, see *Diagnostics* below.
 
 ## 2. How to reload after code changes
 
@@ -224,7 +227,9 @@ identity could not be verified*, *Interrupted (extension restarted)*.
 
 The **❚❚ Pause Automation** button is always visible (it sticks to the top of the popup) and the toolbar badge shows the
 state (`ON`, `II`, `?` = waiting for you, `ERR`, `X`). Warning text is only matched inside dialogs/toasts/alerts or
-challenge URLs, so ordinary feed posts that mention the word "captcha" cannot trigger it.
+challenge URLs, so ordinary feed posts that mention the word "captcha" cannot trigger it. A generic phrase such as "try again later"
+only counts together with a limit-type word, and a hidden or tiny reCAPTCHA badge is not treated as a challenge — only a visible,
+challenge-sized widget is.
 
 **Service-worker restarts:** state is persisted. If Chrome restarts the worker *while a send was in flight*, LeadPilot
 marks the run **Interrupted** and does **not** retry (it cannot know whether LinkedIn received the action) — check
@@ -261,7 +266,7 @@ All of these are in **`content.js`**:
 
 | What broke | Function(s) to update |
 |---|---|
-| **Profile / card discovery** (no cards found on a search page; profile top card not found) | `findResultCards()` (with helpers `resolveCards`, `cardsFromAnchors`), `profileTopCard()`, `profileH1()` |
+| **Profile / card discovery** (no cards found on a search page; profile top card not found) | `findResultCards()` and the strategy list `resultCardLayers()` (helpers `resolveCards`, `cardsBySiblingBlocks`, `cardsFromAnchors`), `profileTopCard()`, `profileH1()` |
 | **Name extraction** | `extractName(card, profileUrl)` for search cards, `extractProfileName()` for profile pages, `cleanName()` |
 | **Company extraction** | `extractCompany(card, name)` for search cards, `extractProfileCompany(top, headline)` for profile pages, `splitHeadline()` |
 | **Job-title extraction** | `extractJobTitle(card, name)` (via `cardHeadline()`), `extractProfileHeadline()` / `extractProfileJobTitle()`, `splitHeadline()` |
@@ -284,11 +289,24 @@ If a LinkedIn UI language other than English is used, the text-matched labels (`
 
 ---
 
+## Diagnostics (when something does not work)
+
+Settings → **Diagnostics** (or the **Copy diagnostics** button in a red / yellow banner, or on the *Getting started* card):
+
+1. Open the LinkedIn page where it fails (for example a people-search results page) in the attached tab.
+2. Press **Run diagnostics**, then **Copy report**, and paste the report to whoever maintains the extension.
+
+The report contains the extension version and state, the browser version, what the content script found on the page (how many result cards each discovery strategy sees, which buttons were recognised on a profile, whether a warning was detected) and the last 20 log lines. It deliberately describes only the **structure** of the page: every text, label, alt text and link is replaced by a length or a placeholder, lead names in the log are replaced by `[lead]`, and message bodies are cut. Only generic UI words such as "Connect", "Message" or "2nd" stay readable. The last report is also kept in `chrome.storage.local` (`lp_diag`).
+
+Developers can run the same checks from DevTools: choose the **"LeadPilot LinkedIn"** execution context and call `__leadPilotContent.diagnose()`.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| "No LinkedIn tab attached" | Open linkedin.com, click the extension, press **Attach this tab**. |
+| Chrome: "Manifest file is missing or unreadable" | You selected the wrong folder. Select the one that directly contains `manifest.json`. |
+| Popup says no tab attached | Open linkedin.com, click the extension, press **Attach this tab**. |
+| Collect from this page finds nothing | You are not on a people-search results page, the page is still loading, or LinkedIn changed its markup. Run **Diagnostics** (see above). |
 | Start is greyed out | Company Page mode is selected, a restriction flag is set, or a run is already active. |
 | "Daily limit reached" | Today's budget is used; change it in Settings (hard ceilings apply) or wait until tomorrow. |
 | "No eligible leads" | Leads already contacted, replied, paused, converted, or *Do Not Contact*. |

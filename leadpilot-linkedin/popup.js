@@ -33,13 +33,13 @@ const BUDGET = { connect: 'connections', message: 'messages', followup: 'followU
 const HINTS = {
   LOGIN_REQUIRED: 'Sign in to LinkedIn in the attached tab, then press Resume.',
   CAPTCHA_SECURITY: 'LinkedIn is asking you to verify something. Resolve it yourself in the LinkedIn tab — LeadPilot never touches it — then press Resume. Consider stopping for today.',
-  RATE_WARNING: 'LinkedIn showed a limit or unusual-activity notice. Do not push on today: lower your daily limits in Settings and Resume only after the notice is gone.',
+  RATE_WARNING: 'LinkedIn showed a limit or unusual-activity notice. Do not push on today: lower your daily limits in Settings and Resume only after the notice is gone. If it is about limited personalised invitations, leave the note empty and press “Send without note”.',
   ACCOUNT_RESTRICTED: 'LinkedIn says the account is restricted. All actions are locked. Resolve it directly with LinkedIn; only then use “Clear restriction flag”.',
-  PAGE_CHANGED: 'The LinkedIn page did not look as expected, so the run stopped (no retry loop). See README → “When LinkedIn changes its markup”.',
-  MISSING_SELECTOR: 'LinkedIn changed the markup of the element named above. The run stopped without retrying. See README → “When LinkedIn changes its markup”.',
+  PAGE_CHANGED: 'The LinkedIn page did not look as expected, so the run stopped (no retry loop). Press “Copy diagnostics” and send the report so the selectors can be fixed (see also README → “When LinkedIn changes its markup”).',
+  MISSING_SELECTOR: 'LinkedIn changed the markup of the element named above, so the run stopped without retrying. Press “Copy diagnostics” and send the report so the selectors can be fixed. If it names the “Add a note” button, your account may have used its monthly personalised notes: clear the note and press “Send without note”.',
   NAV_TIMEOUT: 'The page was slow or did not render. This is a timeout — not a CAPTCHA. Check your connection and the tab, then start again.',
   NO_TAB: 'Open linkedin.com, then press “Attach this tab” and Resume.',
-  CONTENT_UNAVAILABLE: 'The extension could not talk to the LinkedIn tab. Reload the tab (F5) and try again.',
+  CONTENT_UNAVAILABLE: 'The extension could not talk to the LinkedIn tab. Reload the tab (F5) and try again. If it keeps happening, press “Copy diagnostics”.',
   UNSUPPORTED_PAGE: 'LeadPilot only works on the LinkedIn pages it supports (people search, profiles, feed, Company Page admin).',
   IDENTITY_MISMATCH: 'LeadPilot could not confirm who this would be sent to / published as, so it did nothing. Check the tab and try again.',
   INTERRUPTED: 'Chrome restarted the extension mid-action. It was NOT retried. Check LinkedIn to see whether it went through, then start again.',
@@ -121,6 +121,7 @@ function render() {
   renderRun();
   renderApproval();
   renderTabInfo();
+  renderStartCard();
   renderLeadsPanelState();
   renderPostsHeader();
   if (!settingsFilled) fillSettings();
@@ -212,7 +213,7 @@ function renderBanner() {
     h('div', { class: 'meta', text: HINTS[err.code] || '' }),
     j.state === 'restricted'
       ? h('div', { class: 'btns' }, h('button', { class: 'btn btn-sm btn-stop', type: 'button', text: 'Clear restriction flag…', onclick: onClearRestriction }))
-      : null
+      : h('div', { class: 'btns' }, h('button', { class: 'btn btn-sm', type: 'button', text: 'Copy diagnostics', onclick: () => runDiag({ copy: true }) }))
   );
 }
 
@@ -221,6 +222,69 @@ async function onClearRestriction() {
     'Only clear this flag after you have checked LinkedIn directly and the restriction is resolved.\n\nContinuing to automate a restricted account can make things worse. Clear the flag?'
   );
   if (ok) await act('CLEAR_RESTRICTION', { confirm: true }, 'Restriction flag cleared.');
+}
+
+/* ───────────────────────────── getting started ───────────────────────────── */
+
+function renderStartCard() {
+  const card = $('#startCard');
+  const tab = S.tab;
+  const onSearch = !!tab && tab.pageType === 'search_people';
+  const hasLeads = S.leadCount > 0;
+  if (S.settings.accountMode === 'company' || (tab && hasLeads)) { card.hidden = true; return; }
+  card.hidden = false;
+  const shown = tab ? String(tab.pageType || 'other').replace(/_/g, ' ') : '';
+  const steps = [
+    [!!tab, 'Attach your LinkedIn tab', tab ? 'Attached.' : 'Open linkedin.com in this Chrome window, then press “Attach this tab” (opening this popup while on LinkedIn attaches it automatically).'],
+    [onSearch, 'Open a people search', onSearch ? 'You are on a people-search page.' : tab ? `The attached tab shows a “${shown}” page. Use Leads → “Open LinkedIn search”, or search for people yourself.` : 'Do step 1 first.'],
+    [hasLeads, 'Collect leads', hasLeads ? `${S.leadCount} lead(s) collected.` : 'On the search results page, open Leads → “Collect from this page”.'],
+    [false, 'Start a run', 'Choose an action under “Run” below and press Start. You review every message before it is sent.'],
+  ];
+  $('#startSteps').replaceChildren(...steps.map(([ok, title, text], i) =>
+    h('li', { class: ok ? 'done' : '' },
+      h('span', { class: 'mark', 'aria-hidden': 'true', text: ok ? '✓' : String(i + 1) }),
+      h('span', {}, h('strong', { text: title }), h('span', { class: 'sr', text: ok ? ' (done)' : ' (to do)' }), ' — ', text))));
+}
+
+/* ───────────────────────────── diagnostics ───────────────────────────── */
+
+let diagText = '';
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    // Fallback: copy from the (visible) report box.
+    selectTab('settings');
+    $('#diagCard').open = true;
+    const ta = $('#diagOut');
+    ta.focus();
+    ta.select();
+    try { return document.execCommand('copy'); } catch (_e) { return false; }
+  }
+}
+
+async function runDiag({ copy } = {}) {
+  const r = await api('RUN_DIAGNOSTICS');
+  if (!r.ok) { toast(r.message || 'Could not run diagnostics.', true); return false; }
+  diagText = JSON.stringify(r.report, null, 2);
+  $('#diagOut').value = diagText;
+  $('#diagCopy').disabled = false;
+  if (!copy) { toast('Report ready — press “Copy report”.'); return true; }
+  if (await copyText(diagText)) toast('Diagnostics copied — paste it into the chat.');
+  else toast('Open Settings → Diagnostics, select the report text and copy it (Ctrl+C).', true);
+  return true;
+}
+
+async function loadLastDiag() {
+  if ($('#diagOut').value) return;
+  const r = await api('GET_DIAG');
+  if (r.ok && r.diag && r.diag.report) {
+    diagText = JSON.stringify(r.diag.report, null, 2);
+    $('#diagOut').value = diagText;
+    $('#diagCopy').disabled = false;
+  }
 }
 
 /* ───────────────────────────── stats ───────────────────────────── */
@@ -834,6 +898,7 @@ function selectTab(name) {
   try { localStorage.setItem('lp_tab', name); } catch (_) { /* optional */ }
   if (name === 'leads') loadLeads();
   if (name === 'posts') { loadPosts(); updatePostPreview(); }
+  if (name === 'settings') loadLastDiag();
 }
 
 function applyTheme(mode) {
@@ -888,8 +953,12 @@ function wire() {
     btn.disabled = true;
     const r = await api('COLLECT_LEADS');
     btn.disabled = false;
-    if (r.ok) toast(r.note || `${r.found} visible · ${r.added} new · ${r.updated} updated · ${r.duplicates} already known${r.skipped ? ` · ${r.skipped} unreadable` : ''}`);
-    else toast(r.message || 'Could not collect leads.', true);
+    const msg = r.ok ? (r.note || `${r.found} visible · ${r.added} new · ${r.updated} updated · ${r.duplicates} already known${r.skipped ? ` · ${r.skipped} unreadable` : ''}`) : (r.message || 'Could not collect leads.');
+    toast(msg, !r.ok);
+    const box = $('#collectResult');
+    box.hidden = false;
+    box.classList.toggle('bad', !r.ok);
+    box.textContent = `${clockFmt(Date.now())} · ${msg}`; // stays on screen (a toast disappears after a few seconds)
     await loadLeads();
     scheduleRefresh(0);
   });
@@ -905,6 +974,9 @@ function wire() {
     if (r.ok) { ['#nlUrl', '#nlFirst', '#nlLast', '#nlTitle', '#nlCompany'].forEach((s) => { $(s).value = ''; }); await loadLeads(); scheduleRefresh(0); }
   });
   $('#exportBtn').addEventListener('click', onExport);
+  $('#diagRun').addEventListener('click', () => runDiag());
+  $('#diagCopy').addEventListener('click', async () => { toast((await copyText(diagText)) ? 'Report copied.' : 'Select the report text and press Ctrl+C.', false); });
+  $('#startDiag').addEventListener('click', () => runDiag({ copy: true }));
 
   // posts
   $('#postText').addEventListener('input', updatePostPreview);

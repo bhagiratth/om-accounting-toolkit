@@ -21,7 +21,7 @@
 
 /* ───────────────────────────── constants ───────────────────────────── */
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 
 const K = {
   settings: 'lp_settings',
@@ -31,6 +31,7 @@ const K = {
   counters: 'lp_counters',
   posts: 'lp_posts',
   tab: 'lp_tab',
+  diag: 'lp_diag',
 };
 
 // Hard ceilings the settings UI cannot exceed. Deliberately conservative.
@@ -641,7 +642,7 @@ async function bindTab(tab) {
   }
   const prev = await store.get(K.tab, () => null);
   await store.set(K.tab, { tabId: tab.id, windowId: tab.windowId });
-  if (!prev || prev.tabId !== tab.id) await log('info', `Attached to LinkedIn tab: ${str(tab.title, 80) || tab.url}`);
+  if (!prev || prev.tabId !== tab.id) await log('info', `Attached a LinkedIn tab (${pageTypeFromUrl(tab.url).replace(/_/g, ' ')} page).`);
   return { ok: true };
 }
 
@@ -1540,6 +1541,104 @@ async function getState(hintTab) {
   };
 }
 
+/* ───────────────────────────── diagnostics ───────────────────────────── */
+
+function redactPath(path) {
+  return String(path)
+    .replace(/^(\/in\/)[^/]+/i, '$1<profile>')
+    .replace(/^(\/company\/)[^/]+/i, '$1<page>')
+    .replace(/^(\/messaging\/thread\/)[^/]+/i, '$1<thread>')
+    .replace(/^(\/school\/)[^/]+/i, '$1<school>');
+}
+
+const agoText = (ts) => {
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  return m < 1 ? 'just now' : m < 120 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+};
+
+/**
+ * One-click troubleshooting report: extension state plus the STRUCTURE of the attached LinkedIn page (the content
+ * script reduces every piece of page text to a length). Lead names that appear in recent log lines are replaced by
+ * "[lead]" and message bodies are cut, so the report can be pasted to whoever maintains the extension.
+ */
+async function runDiagnostics(hintTab) {
+  const [settings, job, counters, leads, posts, logAll] = await Promise.all([
+    getSettings(), getJob(), getCounters(), getLeads(), getPosts(), store.get(K.log, () => []),
+  ]);
+  const recent = logAll.slice(-20);
+
+  const names = new Set();
+  const addName = (full) => {
+    for (const n of String(full || '').split(/\s+/)) if (n.length >= 3) names.add(n);
+  };
+  const textsIncluded = recent.map((e) => e.message).concat([job.error && job.error.detail, job.error && job.error.leadName]).filter(Boolean).join('\n');
+  for (const l of Object.values(leads)) {
+    const full = fullName(l);
+    if (full.length >= 4 && textsIncluded.includes(full)) addName(full);
+  }
+  if (job.current && leads[job.current.leadId]) addName(fullName(leads[job.current.leadId]));
+  if (job.error && job.error.leadName) addName(job.error.leadName);
+  const hide = (text) => {
+    let t = String(text || '');
+    for (const n of [...names].sort((a, b) => b.length - a.length)) t = t.split(n).join('[lead]');
+    return t;
+  };
+
+  const tab = await tabForOneOff(hintTab);
+  let attachedTab = null;
+  let contentScript = { attached: false };
+  let page = null;
+  if (tab) {
+    let host = '';
+    let path = '';
+    try { const u = new URL(tab.url); host = u.hostname; path = redactPath(u.pathname); } catch (_) { /* ignore */ }
+    attachedTab = { pageType: pageTypeFromUrl(tab.url), host, path, status: tab.status };
+    const res = await callContent(tab.id, { type: 'DIAGNOSE' }, 20000);
+    if (res.ok) {
+      page = res.report;
+      contentScript = { attached: true, reachable: true, version: res.report.contentScript && res.report.contentScript.version };
+    } else {
+      contentScript = { attached: true, reachable: res.code !== 'CONTENT_UNAVAILABLE', error: { code: res.code, message: hide(res.message) } };
+    }
+  }
+
+  const manifest = chrome.runtime.getManifest();
+  const report = {
+    generatedAt: iso(),
+    extension: { version: VERSION, manifestVersion: manifest.manifest_version, permissions: manifest.permissions, hostPermissions: manifest.host_permissions },
+    browser: (typeof navigator !== 'undefined' && navigator.userAgent) || '',
+    settings: {
+      accountMode: settings.accountMode,
+      autoModeEnabled: settings.autoMode.enabled,
+      scheduledPublishing: settings.scheduledPublishing,
+      limits: settings.limits,
+      pacing: settings.pacing,
+      companyPages: settings.companyPages.length,
+    },
+    state: {
+      job: {
+        state: job.state, phase: job.phase, kind: job.kind, action: job.action,
+        queued: job.queue.length, sent: job.sent, skipped: job.skipped,
+        error: job.error ? { code: job.error.code, label: job.error.label, detail: hide(job.error.detail), selector: job.error.selector || undefined } : null,
+      },
+      counters,
+    },
+    data: { leads: Object.keys(leads).length, posts: posts.length, logEntries: logAll.length },
+    attachedTab,
+    contentScript,
+    page,
+    recentLog: recent.map((e) => ({
+      ago: agoText(e.ts),
+      level: e.level,
+      code: e.code || undefined,
+      action: e.action || undefined,
+      message: hide(e.message).replace(/: ".*$/s, ': "…"').slice(0, 220),
+    })),
+  };
+  await store.set(K.diag, { ts: Date.now(), report });
+  return { ok: true, report };
+}
+
 /* ───────────────────────────── message router ───────────────────────────── */
 
 async function handle(msg, sender) {
@@ -1555,6 +1654,8 @@ async function handle(msg, sender) {
       return { ok: true, log: all.slice(-(msg.limit || 100)).reverse() };
     }
     case 'GET_POSTS': return { ok: true, posts: await getPosts() };
+    case 'RUN_DIAGNOSTICS': return runDiagnostics(hint);
+    case 'GET_DIAG': return { ok: true, diag: await store.get(K.diag, () => null) };
     case 'BIND_TAB': {
       if (msg.onlyIfNone && (await getBoundTab())) return { ok: true, already: true };
       return bindTab(hint);

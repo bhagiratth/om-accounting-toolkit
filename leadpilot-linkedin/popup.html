@@ -61,6 +61,14 @@
         <button id="attachBtn" class="btn btn-sm" type="button">Attach this tab</button>
       </div>
 
+      <div id="startCard" class="card" hidden>
+        <h2>Getting started</h2>
+        <ol id="startSteps" class="steps"></ol>
+        <div class="btns left">
+          <button id="startDiag" class="btn btn-sm" type="button">Not working? Copy diagnostics</button>
+        </div>
+      </div>
+
       <div class="stats" id="stats">
         <div class="stat"><span class="stat-label">Leads</span><strong id="stLeads">0</strong><span class="stat-sub">in local list</span></div>
         <div class="stat"><span class="stat-label">Connections today</span><strong id="stConn">0</strong><span class="stat-sub" id="stConnSub"></span><div class="mini"><i id="stConnBar"></i></div></div>
@@ -131,6 +139,7 @@
         <button id="openSearchBtn" class="btn" type="button">Open LinkedIn search</button>
       </div>
       <p class="hint">Collects only the people cards that are visible on the LinkedIn people-search page you opened (no scrolling or paging on its own).</p>
+      <p id="collectResult" class="note" role="status" hidden></p>
       <div class="toolbar">
         <input id="leadFilter" type="search" placeholder="Filter by name, company, title…" aria-label="Filter leads">
         <select id="leadStatus" aria-label="Filter by status">
@@ -314,6 +323,17 @@
         <label class="check"><input type="checkbox" id="s_schedAck"> I deliberately authorise publishing my scheduled posts without a further click (the attached LinkedIn tab will be used at the scheduled time).</label>
         <p class="hint">Off by default. When off, a due post just waits for you to press Publish.</p>
         <button class="btn" type="button" data-save="publishing">Save publishing</button>
+      </details>
+
+      <details class="card" id="diagCard">
+        <summary>Diagnostics</summary>
+        <p class="hint">Something not working? Press <strong>Run diagnostics</strong>, then <strong>Copy report</strong> and paste it to whoever is helping you. The report describes the <em>structure</em> of the attached LinkedIn page and the extension’s state. Page text, names and message bodies are replaced by lengths or placeholders.</p>
+        <div class="btns">
+          <button id="diagRun" class="btn btn-primary" type="button">Run diagnostics</button>
+          <button id="diagCopy" class="btn" type="button" disabled>Copy report</button>
+        </div>
+        <label for="diagOut">Report</label>
+        <textarea id="diagOut" class="mono" rows="8" readonly spellcheck="false" placeholder="Open a LinkedIn page in the attached tab, then press Run diagnostics."></textarea>
       </details>
 
       <details class="card">

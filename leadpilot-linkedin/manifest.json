@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeadPilot LinkedIn",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Compliance-first LinkedIn lead-generation assistant. Review-before-send outreach, local lead list, follow-up reminders and post publishing through the visible LinkedIn UI.",
   "minimum_chrome_version": "110",
   "icons": {
